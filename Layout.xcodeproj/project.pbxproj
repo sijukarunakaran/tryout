@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0E5E84D92F6F05CA003A2981 /* LocalDI in Frameworks */ = {isa = PBXBuildFile; productRef = 0E5E84D82F6F05CA003A2981 /* LocalDI */; };
+		0E5E84DC2F6F05CA003A2981 /* StateKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0E5E84DB2F6F05CA003A2981 /* StateKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,6 +45,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0E5E84D92F6F05CA003A2981 /* LocalDI in Frameworks */,
+				0E5E84DC2F6F05CA003A2981 /* StateKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +98,7 @@
 			name = Layout;
 			packageProductDependencies = (
 				0E5E84D82F6F05CA003A2981 /* LocalDI */,
+				0E5E84DB2F6F05CA003A2981 /* StateKit */,
 			);
 			productName = Layout;
 			productReference = 0E7E27F62F66B54B005581DF /* Layout.app */;
@@ -154,6 +157,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				0E5E84D72F6F05CA003A2981 /* XCLocalSwiftPackageReference "LocalDI" */,
+				0E5E84DD2F6F05CA003A2981 /* XCLocalSwiftPackageReference "StateKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0E7E27F72F66B54B005581DF /* Products */;
@@ -493,12 +497,20 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = LocalDI;
 		};
+		0E5E84DD2F6F05CA003A2981 /* XCLocalSwiftPackageReference "StateKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = StateKit;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		0E5E84D82F6F05CA003A2981 /* LocalDI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LocalDI;
+		};
+		0E5E84DB2F6F05CA003A2981 /* StateKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StateKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
