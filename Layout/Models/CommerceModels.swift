@@ -2,6 +2,7 @@ import SwiftUI
 
 struct Product: Identifiable, Sendable {
     let id: UUID
+    var category: ProductCategory
     var name: String
     var subtitle: String
     var price: Decimal
@@ -46,13 +47,32 @@ enum ColorToken: String, CaseIterable, Sendable {
 
 enum AppTab: Sendable {
     case home
+    case browse
     case cart
+}
+
+enum ProductCategory: String, CaseIterable, Sendable {
+    case fruit
+    case bakery
+    case beverages
+
+    var title: String {
+        switch self {
+        case .fruit:
+            "Fruit"
+        case .bakery:
+            "Bakery"
+        case .beverages:
+            "Beverages"
+        }
+    }
 }
 
 extension Product {
     static let catalog: [Product] = [
         Product(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            category: .fruit,
             name: "Avocados",
             subtitle: "Creamy, ripe, 4 pack",
             price: 6.50,
@@ -60,6 +80,7 @@ extension Product {
         ),
         Product(
             id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            category: .fruit,
             name: "Strawberries",
             subtitle: "Sweet morning harvest",
             price: 5.25,
@@ -67,6 +88,7 @@ extension Product {
         ),
         Product(
             id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            category: .bakery,
             name: "Sourdough",
             subtitle: "Fresh baked artisan loaf",
             price: 4.80,
@@ -74,6 +96,7 @@ extension Product {
         ),
         Product(
             id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            category: .beverages,
             name: "Cold Brew",
             subtitle: "Smooth roast, 1 liter",
             price: 7.40,
@@ -81,6 +104,7 @@ extension Product {
         ),
         Product(
             id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            category: .fruit,
             name: "Lemons",
             subtitle: "Bright citrus bag",
             price: 3.60,
@@ -92,6 +116,7 @@ extension Product {
 extension Product: Equatable {
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id
+            && lhs.category == rhs.category
             && lhs.name == rhs.name
             && lhs.subtitle == rhs.subtitle
             && lhs.price == rhs.price
@@ -115,10 +140,16 @@ extension ColorToken: Equatable {
 extension AppTab: Equatable {
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case (.home, .home), (.cart, .cart):
+        case (.home, .home), (.browse, .browse), (.cart, .cart):
             true
         default:
             false
         }
+    }
+}
+
+extension ProductCategory: Equatable {
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue == rhs.rawValue
     }
 }
