@@ -4,8 +4,13 @@ import SwiftUI
 struct ProductDetailView: View {
     @ObservedObject var store: Store<ProductDetailState, ProductDetailAction>
     @ObservedObject var cartStore: Store<CartState, CartAction>
+    @ObservedObject var shoppingListStore: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
+        let shoppingListFlowStore = store.ifLet(
+            state: \.shoppingListFlow,
+            action: ProductDetailAction.shoppingListFlow
+        )
         let quantityInCart =
             cartStore.state.items.first(where: { $0.product.id == store.state.product.id })?.quantity ?? 0
 
@@ -65,11 +70,46 @@ struct ProductDetailView: View {
                         .background(store.state.product.accentColor.primary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
                     .buttonStyle(.plain)
+
+                    Button(action: {
+                        store.send(
+                            .addToListTapped(shoppingListStore.state.lists.isEmpty == false)
+                        )
+                    }) {
+                        HStack {
+                            Text("Add to Shopping List")
+                            Spacer()
+                            Image(systemName: "text.badge.plus")
+                        }
+                        .font(.headline)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 16)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(20)
             }
             .background(Color(red: 0.97, green: 0.96, blue: 0.93))
             .navigationTitle("Product")
+            .sheet(
+                item: Binding(
+                    get: { store.state.shoppingListFlow },
+                    set: { newValue in
+                        guard newValue == nil else { return }
+                        store.send(.shoppingListFlow(.dismissed))
+                    }
+                )
+            ) { _ in
+                if let shoppingListFlowStore {
+                    ShoppingListFlowSheet(
+                        store: shoppingListFlowStore,
+                        shoppingListStore: shoppingListStore
+                    )
+                }
+            }
         }
     }
 }

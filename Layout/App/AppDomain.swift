@@ -5,6 +5,7 @@ struct AppState: Sendable {
     var browse = BrowseState()
     var home = HomeState()
     var cart = CartState()
+    var shoppingList = ShoppingListState()
 }
 
 @CasePathable
@@ -13,6 +14,7 @@ enum AppAction: Sendable {
     case browse(BrowseAction)
     case home(HomeAction)
     case cart(CartAction)
+    case shoppingList(ShoppingListAction)
 }
 
 let appReducer = Reducer<AppState, AppAction>.combine(
@@ -28,13 +30,17 @@ let appReducer = Reducer<AppState, AppAction>.combine(
         state: \.cart,
         action: AppAction.cart
     ),
+    shoppingListReducer.scope(
+        state: \.shoppingList,
+        action: AppAction.shoppingList
+    ),
     Reducer<AppState, AppAction> { state, action in
         switch action {
         case let .selectedTabChanged(tab):
             state.selectedTab = tab
             return .none
 
-        case .browse, .cart:
+        case .browse, .cart, .shoppingList:
             return .none
 
         case .home:
@@ -49,5 +55,6 @@ extension AppState: Equatable {
             && lhs.browse == rhs.browse
             && lhs.home == rhs.home
             && lhs.cart == rhs.cart
+            && lhs.shoppingList == rhs.shoppingList
     }
 }

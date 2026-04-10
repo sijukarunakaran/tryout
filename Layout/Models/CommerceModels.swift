@@ -18,6 +18,12 @@ struct CartItem: Identifiable, Sendable {
     }
 }
 
+struct ShoppingList: Identifiable, Sendable {
+    let id: UUID
+    var name: String
+    var products: [Product]
+}
+
 enum ColorToken: String, CaseIterable, Sendable {
     case citrus
     case sky
@@ -49,6 +55,7 @@ enum AppTab: Sendable {
     case home
     case browse
     case cart
+    case shoppingLists
 }
 
 enum ProductCategory: String, CaseIterable, Sendable {
@@ -131,6 +138,14 @@ extension CartItem: Equatable {
     }
 }
 
+extension ShoppingList: Equatable {
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id
+            && lhs.name == rhs.name
+            && lhs.products == rhs.products
+    }
+}
+
 extension ColorToken: Equatable {
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.rawValue == rhs.rawValue
@@ -140,7 +155,7 @@ extension ColorToken: Equatable {
 extension AppTab: Equatable {
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case (.home, .home), (.browse, .browse), (.cart, .cart):
+        case (.home, .home), (.browse, .browse), (.cart, .cart), (.shoppingLists, .shoppingLists):
             true
         default:
             false

@@ -4,11 +4,16 @@ import SwiftUI
 struct BrowseView: View {
     @ObservedObject var store: Store<BrowseState, BrowseAction>
     @ObservedObject var cartStore: Store<CartState, CartAction>
+    @ObservedObject var shoppingListStore: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
         let productDetailStore = store.ifLet(
             state: \.productDetail,
             action: BrowseAction.productDetail
+        )
+        let shoppingListFlowStore = store.ifLet(
+            state: \.shoppingListFlow,
+            action: BrowseAction.shoppingListFlow
         )
 
         NavigationStack {
@@ -28,6 +33,14 @@ struct BrowseView: View {
                                     },
                                     addToCart: {
                                         cartStore.send(.add(product))
+                                    },
+                                    addToList: {
+                                        store.send(
+                                            .addToListTapped(
+                                                product,
+                                                hasExistingLists: shoppingListStore.state.lists.isEmpty == false
+                                            )
+                                        )
                                     }
                                 )
                             }
@@ -51,7 +64,24 @@ struct BrowseView: View {
                 if let productDetailStore {
                     ProductDetailView(
                         store: productDetailStore,
-                        cartStore: cartStore
+                        cartStore: cartStore,
+                        shoppingListStore: shoppingListStore
+                    )
+                }
+            }
+            .sheet(
+                item: Binding(
+                    get: { store.state.shoppingListFlow },
+                    set: { newValue in
+                        guard newValue == nil else { return }
+                        store.send(.shoppingListFlow(.dismissed))
+                    }
+                )
+            ) { _ in
+                if let shoppingListFlowStore {
+                    ShoppingListFlowSheet(
+                        store: shoppingListFlowStore,
+                        shoppingListStore: shoppingListStore
                     )
                 }
             }
@@ -64,6 +94,7 @@ private struct BrowseRow: View {
     let quantityInCart: Int
     let openDetail: () -> Void
     let addToCart: () -> Void
+    let addToList: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -100,8 +131,13 @@ private struct BrowseRow: View {
             HStack {
                 Button("View Details", action: openDetail)
                     .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.plain)
 
                 Spacer()
+
+                Button("Add to List", action: addToList)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.plain)
 
                 Button(action: addToCart) {
                     HStack(spacing: 8) {

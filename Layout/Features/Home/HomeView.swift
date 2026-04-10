@@ -4,11 +4,16 @@ import SwiftUI
 struct HomeView: View {
     @ObservedObject var store: Store<HomeState, HomeAction>
     @ObservedObject var cartStore: Store<CartState, CartAction>
+    @ObservedObject var shoppingListStore: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
         let productDetailStore = store.ifLet(
             state: \.productDetail,
             action: HomeAction.productDetail
+        )
+        let shoppingListFlowStore = store.ifLet(
+            state: \.shoppingListFlow,
+            action: HomeAction.shoppingListFlow
         )
 
         NavigationStack {
@@ -28,6 +33,14 @@ struct HomeView: View {
                                 },
                                 addToCart: {
                                     cartStore.send(.add(product))
+                                },
+                                addToList: {
+                                    store.send(
+                                        .addToListTapped(
+                                            product,
+                                            hasExistingLists: shoppingListStore.state.lists.isEmpty == false
+                                        )
+                                    )
                                 }
                             )
                         }
@@ -49,7 +62,24 @@ struct HomeView: View {
                 if let productDetailStore {
                     ProductDetailView(
                         store: productDetailStore,
-                        cartStore: cartStore
+                        cartStore: cartStore,
+                        shoppingListStore: shoppingListStore
+                    )
+                }
+            }
+            .sheet(
+                item: Binding(
+                    get: { store.state.shoppingListFlow },
+                    set: { newValue in
+                        guard newValue == nil else { return }
+                        store.send(.shoppingListFlow(.dismissed))
+                    }
+                )
+            ) { _ in
+                if let shoppingListFlowStore {
+                    ShoppingListFlowSheet(
+                        store: shoppingListFlowStore,
+                        shoppingListStore: shoppingListStore
                     )
                 }
             }
@@ -88,6 +118,7 @@ private struct ProductCard: View {
     let quantityInCart: Int
     let openDetail: () -> Void
     let addToCart: () -> Void
+    let addToList: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -140,6 +171,21 @@ private struct ProductCard: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .background(product.accentColor.primary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            Button(action: addToList) {
+                HStack {
+                    Text("Add to List")
+                    Spacer()
+                    Image(systemName: "text.badge.plus")
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity)
+                .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .buttonStyle(.plain)
 

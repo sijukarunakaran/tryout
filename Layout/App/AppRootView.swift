@@ -6,7 +6,7 @@ struct AppRootView: View {
         initialState: AppState(),
         reducer: appReducer
     )
-    
+
     var body: some View {
         let homeStore = store.scope(
             state: { @Sendable appState in
@@ -26,6 +26,12 @@ struct AppRootView: View {
             },
             action: AppAction.cart
         )
+        let shoppingListStore = store.scope(
+            state: { @Sendable appState in
+                appState.shoppingList
+            },
+            action: AppAction.shoppingList
+        )
         
         TabView(
             selection: store.binding(
@@ -35,7 +41,8 @@ struct AppRootView: View {
         ) {
             HomeView(
                 store: homeStore,
-                cartStore: cartStore
+                cartStore: cartStore,
+                shoppingListStore: shoppingListStore
             )
             .tabItem {
                 Label("Home", systemImage: "house.fill")
@@ -44,7 +51,8 @@ struct AppRootView: View {
             
             BrowseView(
                 store: browseStore,
-                cartStore: cartStore
+                cartStore: cartStore,
+                shoppingListStore: shoppingListStore
             )
             .tabItem {
                 Label("Browse", systemImage: "square.grid.2x2.fill")
@@ -59,10 +67,18 @@ struct AppRootView: View {
             }
             .tag(AppTab.cart)
             .badge(cartItemCount)
+
+            ShoppingListView(
+                store: shoppingListStore
+            )
+            .tabItem {
+                Label("Lists", systemImage: "list.bullet.clipboard")
+            }
+            .tag(AppTab.shoppingLists)
         }
         .tint(Color(red: 0.13, green: 0.39, blue: 0.28))
     }
-    
+
     private var cartItemCount: Int {
         store.state.cart.items.reduce(0) { $0 + $1.quantity }
     }
