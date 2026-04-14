@@ -1,6 +1,7 @@
 import StateKit
 
-enum AppDomain: FeatureDomain {
+@Feature
+enum AppDomain {
     @NonisolatedEquatable
     struct State: Sendable {
         var selectedTab: AppTab = .home

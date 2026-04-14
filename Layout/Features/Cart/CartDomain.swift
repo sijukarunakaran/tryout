@@ -2,7 +2,8 @@ import Foundation
 import LocalDI
 import StateKit
 
-enum CartDomain: FeatureDomain {
+@Feature
+enum CartDomain {
     @NonisolatedEquatable
     struct State: Sendable {
         @NonisolatedEquatable

@@ -1,9 +1,10 @@
 import Foundation
 import StateKit
 
-enum BrowseDomain: FeatureDomain {
+@Feature
+enum BrowseDomain {
     @NonisolatedEquatable
-    struct State: CatalogFeatureDomain.State {
+    struct State: CatalogFeatureDomain.State, Sendable {
         var products = Product.catalog
         var cartQuantities: [Product.ID: Int] = [:]
         var availableShoppingLists: [ShoppingList] = []

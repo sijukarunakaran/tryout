@@ -1,7 +1,8 @@
 import Foundation
 import StateKit
 
-enum ShoppingListFlowDomain: FeatureDomain {
+@Feature
+enum ShoppingListFlowDomain {
     @NonisolatedEquatable
     struct State: Identifiable, Sendable {
         @NonisolatedEquatable
@@ -47,7 +48,8 @@ typealias ShoppingListFlowAction = ShoppingListFlowDomain.Action
 
 let shoppingListFlowReducer = ShoppingListFlowDomain.reducer
 
-enum ShoppingListDomain: FeatureDomain {
+@Feature
+enum ShoppingListDomain {
     @NonisolatedEquatable
     struct State: Sendable {
         var lists: [ShoppingList] = []
