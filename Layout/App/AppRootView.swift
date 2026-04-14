@@ -4,7 +4,7 @@ import SwiftUI
 struct AppRootView: View {
     @StateObject private var store = Store(
         initialState: AppState(),
-        reducer: appReducer
+        reducer: AppDomain.reducer
     )
 
     var body: some View {
@@ -40,9 +40,7 @@ struct AppRootView: View {
             )
         ) {
             HomeView(
-                store: homeStore,
-                cartStore: cartStore,
-                shoppingListStore: shoppingListStore
+                store: homeStore
             )
             .tabItem {
                 Label("Home", systemImage: "house.fill")
@@ -50,9 +48,7 @@ struct AppRootView: View {
             .tag(AppTab.home)
             
             BrowseView(
-                store: browseStore,
-                cartStore: cartStore,
-                shoppingListStore: shoppingListStore
+                store: browseStore
             )
             .tabItem {
                 Label("Browse", systemImage: "square.grid.2x2.fill")

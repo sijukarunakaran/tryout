@@ -1,5 +1,7 @@
+import StateKit
 import SwiftUI
 
+@NonisolatedEquatable
 struct Product: Identifiable, Sendable {
     let id: UUID
     var category: ProductCategory
@@ -9,6 +11,7 @@ struct Product: Identifiable, Sendable {
     var accentColor: ColorToken
 }
 
+@NonisolatedEquatable
 struct CartItem: Identifiable, Sendable {
     var product: Product
     var quantity: Int
@@ -18,6 +21,7 @@ struct CartItem: Identifiable, Sendable {
     }
 }
 
+@NonisolatedEquatable
 struct ShoppingList: Identifiable, Sendable {
     let id: UUID
     var name: String
@@ -118,32 +122,6 @@ extension Product {
             accentColor: .citrus
         ),
     ]
-}
-
-extension Product: Equatable {
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id
-            && lhs.category == rhs.category
-            && lhs.name == rhs.name
-            && lhs.subtitle == rhs.subtitle
-            && lhs.price == rhs.price
-            && lhs.accentColor == rhs.accentColor
-    }
-}
-
-extension CartItem: Equatable {
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.product == rhs.product
-            && lhs.quantity == rhs.quantity
-    }
-}
-
-extension ShoppingList: Equatable {
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id
-            && lhs.name == rhs.name
-            && lhs.products == rhs.products
-    }
 }
 
 extension ColorToken: Equatable {

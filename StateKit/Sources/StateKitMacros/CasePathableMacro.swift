@@ -15,7 +15,7 @@ struct CasePathableMacro: MemberMacro {
         }
 
         let enumName = enumDecl.name.text
-        let accessModifier = Self.accessModifier(from: enumDecl.modifiers).map { "\($0) " } ?? ""
+        let accessModifier = MacroSupport.accessModifier(from: enumDecl.modifiers).map { "\($0) " } ?? ""
 
         return enumDecl.memberBlock.members.compactMap { member in
             guard
@@ -51,28 +51,4 @@ struct CasePathableMacro: MemberMacro {
         }
     }
 
-    private static func accessModifier(from modifiers: DeclModifierListSyntax) -> String? {
-        for modifier in modifiers {
-            switch modifier.name.tokenKind {
-            case .keyword(.public):
-                return "public"
-            case .keyword(.package):
-                return "package"
-            default:
-                continue
-            }
-        }
-        return nil
-    }
-}
-
-private enum MacroError: Error, CustomStringConvertible {
-    case message(String)
-
-    var description: String {
-        switch self {
-        case let .message(message):
-            return message
-        }
-    }
 }

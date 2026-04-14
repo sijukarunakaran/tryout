@@ -35,7 +35,11 @@ let package = Package(
         ),
         .testTarget(
             name: "StateKitTests",
-            dependencies: ["StateKit"]
+            dependencies: [
+                "StateKit",
+                "StateKitMacros",
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
+            ]
         ),
     ]
 )

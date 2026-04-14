@@ -3,16 +3,12 @@ import SwiftUI
 
 struct ProductDetailView: View {
     @ObservedObject var store: Store<ProductDetailState, ProductDetailAction>
-    @ObservedObject var cartStore: Store<CartState, CartAction>
-    @ObservedObject var shoppingListStore: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
         let shoppingListFlowStore = store.ifLet(
             state: \.shoppingListFlow,
             action: ProductDetailAction.shoppingListFlow
         )
-        let quantityInCart =
-            cartStore.state.items.first(where: { $0.product.id == store.state.product.id })?.quantity ?? 0
 
         NavigationStack {
             ScrollView {
@@ -47,13 +43,13 @@ struct ProductDetailView: View {
                     }
 
                     Button(action: {
-                        cartStore.send(.add(store.state.product))
+                        store.send(.addToCartTapped(store.state.product))
                     }) {
                         HStack {
-                            Text(quantityInCart == 0 ? "Add to Cart" : "Add Another")
+                            Text(store.state.cartQuantity == 0 ? "Add to Cart" : "Add Another")
                             Spacer()
-                            if quantityInCart > 0 {
-                                Text("\(quantityInCart)")
+                            if store.state.cartQuantity > 0 {
+                                Text("\(store.state.cartQuantity)")
                                     .font(.caption.weight(.bold))
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
@@ -73,7 +69,7 @@ struct ProductDetailView: View {
 
                     Button(action: {
                         store.send(
-                            .addToListTapped(shoppingListStore.state.lists.isEmpty == false)
+                            .addToListTapped(store.state.availableShoppingLists.isEmpty == false)
                         )
                     }) {
                         HStack {
@@ -105,8 +101,7 @@ struct ProductDetailView: View {
             ) { _ in
                 if let shoppingListFlowStore {
                     ShoppingListFlowSheet(
-                        store: shoppingListFlowStore,
-                        shoppingListStore: shoppingListStore
+                        store: shoppingListFlowStore
                     )
                 }
             }

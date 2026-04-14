@@ -3,8 +3,6 @@ import SwiftUI
 
 struct BrowseView: View {
     @ObservedObject var store: Store<BrowseState, BrowseAction>
-    @ObservedObject var cartStore: Store<CartState, CartAction>
-    @ObservedObject var shoppingListStore: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
         let productDetailStore = store.ifLet(
@@ -24,7 +22,7 @@ struct BrowseView: View {
                         Section(category.title) {
                             ForEach(products) { product in
                                 let quantityInCart =
-                                    cartStore.state.items.first(where: { $0.product.id == product.id })?.quantity ?? 0
+                                    store.state.cartQuantities[product.id] ?? 0
                                 BrowseRow(
                                     product: product,
                                     quantityInCart: quantityInCart,
@@ -32,13 +30,13 @@ struct BrowseView: View {
                                         store.send(.productTapped(product.id))
                                     },
                                     addToCart: {
-                                        cartStore.send(.add(product))
+                                        store.send(.addToCartTapped(product))
                                     },
                                     addToList: {
                                         store.send(
                                             .addToListTapped(
                                                 product,
-                                                hasExistingLists: shoppingListStore.state.lists.isEmpty == false
+                                                hasExistingLists: store.state.availableShoppingLists.isEmpty == false
                                             )
                                         )
                                     }
@@ -63,9 +61,7 @@ struct BrowseView: View {
             ) { _ in
                 if let productDetailStore {
                     ProductDetailView(
-                        store: productDetailStore,
-                        cartStore: cartStore,
-                        shoppingListStore: shoppingListStore
+                        store: productDetailStore
                     )
                 }
             }
@@ -80,8 +76,7 @@ struct BrowseView: View {
             ) { _ in
                 if let shoppingListFlowStore {
                     ShoppingListFlowSheet(
-                        store: shoppingListFlowStore,
-                        shoppingListStore: shoppingListStore
+                        store: shoppingListFlowStore
                     )
                 }
             }

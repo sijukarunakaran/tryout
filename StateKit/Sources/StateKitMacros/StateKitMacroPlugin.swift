@@ -5,5 +5,6 @@ import SwiftSyntaxMacros
 struct StateKitMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         CasePathableMacro.self,
+        NonisolatedEquatableMacro.self,
     ]
 }

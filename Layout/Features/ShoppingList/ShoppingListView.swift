@@ -31,8 +31,7 @@ struct ShoppingListView: View {
                 ) { _ in
                     if let shoppingListFlowStore {
                         ShoppingListFlowSheet(
-                            store: shoppingListFlowStore,
-                            shoppingListStore: store
+                            store: shoppingListFlowStore
                         )
                     }
                 }
@@ -49,13 +48,20 @@ struct ShoppingListView: View {
     }
 
     private var shoppingListCollection: some View {
-        List {
-            ForEach(store.state.lists) { list in
-                ShoppingListSection(list: list)
+        ScrollView {
+            VStack(spacing: 18) {
+                ForEach(store.state.lists) { list in
+                    ShoppingListSection(
+                        list: list,
+                        cartQuantities: store.state.cartQuantities,
+                        addToCart: { product in
+                            store.send(.addToCartTapped(product))
+                        }
+                    )
+                }
             }
+            .padding(20)
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
         .background(Color(red: 0.95, green: 0.96, blue: 0.92))
     }
 
@@ -86,35 +92,117 @@ struct ShoppingListView: View {
 
 private struct ShoppingListSection: View {
     let list: ShoppingList
+    let cartQuantities: [Product.ID: Int]
+    let addToCart: (Product) -> Void
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 16) {
+            header
+
             if list.products.isEmpty {
                 Text("No products yet")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .padding(.top, 4)
             } else {
                 ForEach(list.products) { product in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(product.name)
-                            .font(.headline)
-                        Text(product.subtitle)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
+                    ShoppingListProductRow(
+                        product: product,
+                        quantityInCart: cartQuantities[product.id] ?? 0,
+                        addToCart: {
+                            addToCart(product)
+                        }
+                    )
                 }
             }
-        } header: {
-            Text(list.name)
-        } footer: {
-            Text("\(list.products.count) products")
         }
+        .padding(20)
+        .background(.white, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .shadow(color: .black.opacity(0.05), radius: 16, y: 8)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(list.name)
+                .font(.title3.weight(.bold))
+
+            Spacer()
+
+            Text("\(list.products.count) products")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.06), in: Capsule())
+        }
+    }
+}
+
+private struct ShoppingListProductRow: View {
+    let product: Product
+    let quantityInCart: Int
+    let addToCart: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [product.accentColor.primary, product.accentColor.secondary],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 76, height: 76)
+                .overlay {
+                    Text(product.name.prefix(1))
+                        .font(.title.weight(.black))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(product.name)
+                    .font(.headline)
+
+                Text(product.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Text(product.price.formatted(.currency(code: "USD")))
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(product.accentColor.primary)
+
+                    if quantityInCart > 0 {
+                        Text("In cart: \(quantityInCart)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Spacer()
+
+            Button(action: addToCart) {
+                VStack(spacing: 4) {
+                    Image(systemName: quantityInCart == 0 ? "plus" : "plus.circle.fill")
+                        .font(.system(size: 18, weight: .bold))
+                    Text(quantityInCart == 0 ? "Add" : "Add More")
+                        .font(.caption2.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: 70, height: 70)
+                .background(product.accentColor.primary, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .background(Color.black.opacity(0.025), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
 
 struct ShoppingListFlowSheet: View {
     @ObservedObject var store: Store<ShoppingListFlowState, ShoppingListFlowAction>
-    @ObservedObject var shoppingListStore: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
         NavigationStack {
@@ -163,12 +251,9 @@ struct ShoppingListFlowSheet: View {
             }
 
             Section("Available Lists") {
-                ForEach(shoppingListStore.state.lists) { list in
+                ForEach(store.state.availableLists) { list in
                     Button {
-                        if let product = store.state.product {
-                            shoppingListStore.send(.addProductToList(product, list.id))
-                        }
-                        store.send(.dismissed)
+                        store.send(.listSelected(list.id))
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
@@ -221,13 +306,7 @@ struct ShoppingListFlowSheet: View {
                 )
 
                 Button("Create List") {
-                    shoppingListStore.send(
-                        .createList(
-                            name: store.state.draftListName,
-                            product: store.state.product
-                        )
-                    )
-                    store.send(.dismissed)
+                    store.send(.createListConfirmed)
                 }
                 .disabled(
                     store.state.draftListName

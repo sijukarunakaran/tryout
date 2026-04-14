@@ -1,127 +1,159 @@
 import Foundation
 import StateKit
 
-struct ShoppingListFlowState: Identifiable, Sendable {
-    enum Mode: Sendable {
-        case picker
-        case create
+enum ShoppingListFlowDomain: FeatureDomain {
+    @NonisolatedEquatable
+    struct State: Identifiable, Sendable {
+        enum Mode: Sendable, Equatable {
+            case picker
+            case create
+        }
+
+        let id: UUID
+        var product: Product?
+        var mode: Mode
+        var draftListName = ""
+        var availableLists: [ShoppingList] = []
     }
 
-    let id: UUID
-    var product: Product?
-    var mode: Mode
-    var draftListName = ""
-}
-
-enum ShoppingListFlowAction: Sendable {
-    case createNewListTapped
-    case draftListNameChanged(String)
-    case dismissed
-}
-
-let shoppingListFlowReducer = Reducer<ShoppingListFlowState, ShoppingListFlowAction> { state, action in
-    switch action {
-    case .createNewListTapped:
-        state.mode = .create
-        state.draftListName = ""
-        return .none
-
-    case let .draftListNameChanged(name):
-        state.draftListName = name
-        return .none
-
-    case .dismissed:
-        return .none
+    enum Action: Sendable {
+        case createNewListTapped
+        case draftListNameChanged(String)
+        case listSelected(ShoppingList.ID)
+        case createListConfirmed
+        case dismissed
     }
-}
 
-struct ShoppingListState: Sendable {
-    var lists: [ShoppingList] = []
-    var shoppingListFlow: ShoppingListFlowState?
-}
-
-@CasePathable
-enum ShoppingListAction: Sendable {
-    case createListButtonTapped
-    case createList(name: String, product: Product?)
-    case addProductToList(Product, ShoppingList.ID)
-    case shoppingListFlow(ShoppingListFlowAction)
-}
-
-let shoppingListReducer = Reducer<ShoppingListState, ShoppingListAction>.combine(
-    shoppingListFlowReducer.optional.scope(
-        state: \.shoppingListFlow,
-        action: ShoppingListAction.shoppingListFlow
-    ),
-    Reducer<ShoppingListState, ShoppingListAction> { state, action in
+    static let reducer = Reducer<State, Action> { state, action in
         switch action {
-        case .createListButtonTapped:
-            state.shoppingListFlow = ShoppingListFlowState(
-                id: UUID(),
-                product: nil,
-                mode: .create
-            )
+        case .createNewListTapped:
+            state.mode = .create
+            state.draftListName = ""
             return .none
 
-        case let .createList(name, product):
-            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmedName.isEmpty == false else {
-                return .none
-            }
+        case let .draftListNameChanged(name):
+            state.draftListName = name
+            return .none
 
-            state.lists.append(
-                ShoppingList(
+        case .listSelected, .createListConfirmed, .dismissed:
+            return .none
+        }
+    }
+}
+
+typealias ShoppingListFlowState = ShoppingListFlowDomain.State
+typealias ShoppingListFlowAction = ShoppingListFlowDomain.Action
+
+let shoppingListFlowReducer = ShoppingListFlowDomain.reducer
+
+enum ShoppingListDomain: FeatureDomain {
+    @NonisolatedEquatable
+    struct State: Sendable {
+        var lists: [ShoppingList] = []
+        var cartQuantities: [Product.ID: Int] = [:]
+        var shoppingListFlow: ShoppingListFlowState?
+    }
+
+    @CasePathable
+    enum Action: Sendable {
+        case createListButtonTapped
+        case createList(name: String, product: Product?)
+        case addProductToList(Product, ShoppingList.ID)
+        case addToCartTapped(Product)
+        case shoppingListFlow(ShoppingListFlowAction)
+    }
+
+    static let reducer = Reducer<State, Action>.combine(
+        shoppingListFlowReducer.optional.scope(
+            state: \.shoppingListFlow,
+            action: Action.shoppingListFlow
+        ),
+        Reducer<State, Action> { state, action in
+            switch action {
+            case .createListButtonTapped:
+                state.shoppingListFlow = ShoppingListFlowState(
                     id: UUID(),
-                    name: trimmedName,
-                    products: product.map { [$0] } ?? []
+                    product: nil,
+                    mode: .create,
+                    availableLists: state.lists
                 )
-            )
-            state.shoppingListFlow = nil
-            return .none
+                return .none
 
-        case let .addProductToList(product, listID):
-            guard let index = state.lists.firstIndex(where: { $0.id == listID }) else {
+            case let .createList(name, product):
+                let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmedName.isEmpty == false else {
+                    return .none
+                }
+
+                state.lists.append(
+                    ShoppingList(
+                        id: UUID(),
+                        name: trimmedName,
+                        products: product.map { [$0] } ?? []
+                    )
+                )
+                state.shoppingListFlow = nil
+                return .none
+
+            case let .addProductToList(product, listID):
+                guard let index = state.lists.firstIndex(where: { $0.id == listID }) else {
+                    return .none
+                }
+
+                if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
+                    state.lists[index].products.append(product)
+                }
+                return .none
+
+            case let .shoppingListFlow(.listSelected(listID)):
+                guard
+                    let product = state.shoppingListFlow?.product,
+                    let index = state.lists.firstIndex(where: { $0.id == listID })
+                else {
+                    return .none
+                }
+
+                if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
+                    state.lists[index].products.append(product)
+                }
+                state.shoppingListFlow = nil
+                return .none
+
+            case .shoppingListFlow(.createListConfirmed):
+                guard let flow = state.shoppingListFlow else {
+                    return .none
+                }
+
+                let trimmedName = flow.draftListName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmedName.isEmpty == false else {
+                    return .none
+                }
+
+                state.lists.append(
+                    ShoppingList(
+                        id: UUID(),
+                        name: trimmedName,
+                        products: flow.product.map { [$0] } ?? []
+                    )
+                )
+                state.shoppingListFlow = nil
+                return .none
+
+            case .shoppingListFlow(.dismissed):
+                state.shoppingListFlow = nil
+                return .none
+
+            case .addToCartTapped:
+                return .none
+
+            case .shoppingListFlow:
                 return .none
             }
-
-            if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
-                state.lists[index].products.append(product)
-            }
-            return .none
-
-        case .shoppingListFlow(.dismissed):
-            state.shoppingListFlow = nil
-            return .none
-
-        case .shoppingListFlow:
-            return .none
         }
-    }
-)
-
-extension ShoppingListState: Equatable {
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.lists == rhs.lists
-            && lhs.shoppingListFlow == rhs.shoppingListFlow
-    }
+    )
 }
 
-extension ShoppingListFlowState: Equatable {
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id
-            && lhs.product == rhs.product
-            && lhs.mode == rhs.mode
-            && lhs.draftListName == rhs.draftListName
-    }
-}
+typealias ShoppingListState = ShoppingListDomain.State
+typealias ShoppingListAction = ShoppingListDomain.Action
 
-extension ShoppingListFlowState.Mode: Equatable {
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        switch (lhs, rhs) {
-        case (.picker, .picker), (.create, .create):
-            true
-        default:
-            false
-        }
-    }
-}
+let shoppingListReducer = ShoppingListDomain.reducer
