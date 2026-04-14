@@ -1,7 +1,8 @@
 import Foundation
 import StateKit
 
-enum ProductDetailDomain: FeatureDomain {
+@Feature
+enum ProductDetailDomain {
     @CasePathable
     enum Action: Sendable {
         case dismissed

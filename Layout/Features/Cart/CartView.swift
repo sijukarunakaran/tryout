@@ -6,7 +6,19 @@ struct CartView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
+            VStack(spacing: 0) {
+                if let checkoutNotice = store.state.checkoutNotice {
+                    CheckoutNoticeCard(
+                        notice: checkoutNotice,
+                        dismiss: {
+                            store.send(.dismissCheckoutNotice)
+                        }
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                }
+
+                Group {
                 if store.state.items.isEmpty {
                     emptyState
                 } else {
@@ -26,6 +38,7 @@ struct CartView: View {
                     }
                     .background(Color(red: 0.95, green: 0.96, blue: 0.98))
                 }
+            }
             }
             .navigationTitle("Cart")
         }
@@ -67,6 +80,34 @@ struct CartView: View {
                 Text(subtotal.formatted(.currency(code: "USD")))
                     .fontWeight(.bold)
             }
+
+            Button(action: {
+                store.send(.checkoutTapped)
+            }) {
+                HStack {
+                    if store.state.isCheckingOut {
+                        ProgressView()
+                            .tint(.white)
+                        Text("Placing Order")
+                    } else {
+                        Text("Checkout")
+                        Spacer()
+                        Text(subtotal.formatted(.currency(code: "USD")))
+                            .font(.subheadline.weight(.bold))
+                    }
+                }
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
+                .background(
+                    Color(red: 0.13, green: 0.39, blue: 0.28),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(store.state.isCheckingOut)
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,6 +118,41 @@ struct CartView: View {
         store.state.items.reduce(0) { partial, item in
             partial + (item.product.price * Decimal(item.quantity))
         }
+    }
+}
+
+private struct CheckoutNoticeCard: View {
+    let notice: CartState.CheckoutNotice
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: notice.tone == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.title3)
+                .foregroundStyle(notice.tone == .success ? Color.green : Color.orange)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(notice.tone == .success ? "Order Confirmed" : "Checkout Failed")
+                    .font(.headline)
+
+                Text(notice.message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color.black.opacity(0.06), in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .background(.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
 
