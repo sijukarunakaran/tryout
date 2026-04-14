@@ -34,5 +34,40 @@ final class NonisolatedEquatableMacroTests: XCTestCase {
             ]
         )
     }
+
+    func testPayloadFreeEnumExpansion() {
+        assertMacroExpansion(
+            """
+            @NonisolatedEquatable
+            enum Mode {
+                case picker
+                case create
+            }
+            """,
+            expandedSource:
+            """
+            enum Mode {
+                case picker
+                case create
+            }
+
+            extension Mode: Equatable {
+                nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+                    switch (lhs, rhs) {
+                    case (.picker, .picker):
+                        true
+                    case (.create, .create):
+                        true
+                    default:
+                        false
+                    }
+                }
+            }
+            """,
+            macros: [
+                "NonisolatedEquatable": NonisolatedEquatableMacro.self,
+            ]
+        )
+    }
 }
 #endif

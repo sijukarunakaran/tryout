@@ -4,7 +4,8 @@ import StateKit
 enum ShoppingListFlowDomain: FeatureDomain {
     @NonisolatedEquatable
     struct State: Identifiable, Sendable {
-        enum Mode: Sendable, Equatable {
+        @NonisolatedEquatable
+        enum Mode: Sendable {
             case picker
             case create
         }
