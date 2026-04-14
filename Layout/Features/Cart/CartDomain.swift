@@ -1,9 +1,25 @@
+import Foundation
+import LocalDI
 import StateKit
 
 enum CartDomain: FeatureDomain {
     @NonisolatedEquatable
     struct State: Sendable {
+        @NonisolatedEquatable
+        struct CheckoutNotice: Sendable {
+            @NonisolatedEquatable
+            enum Tone: Sendable {
+                case success
+                case failure
+            }
+
+            var tone: Tone
+            var message: String
+        }
+
         var items: [CartItem] = []
+        var isCheckingOut = false
+        var checkoutNotice: CheckoutNotice?
     }
 
     enum Action: Sendable {
@@ -11,6 +27,14 @@ enum CartDomain: FeatureDomain {
         case decrement(Product.ID)
         case remove(Product.ID)
         case clear
+        case checkoutTapped
+        case checkoutSucceeded(orderNumber: String, subtotalText: String)
+        case checkoutFailed(String)
+        case dismissCheckoutNotice
+    }
+
+    private struct Dependencies {
+        @Dependency(OrderClient.self) var orderClient
     }
 
     static let reducer = Reducer<State, Action> { state, action in
@@ -41,7 +65,62 @@ enum CartDomain: FeatureDomain {
 
         case .clear:
             state.items.removeAll()
+            state.checkoutNotice = nil
             return .none
+
+        case .checkoutTapped:
+            guard state.items.isEmpty == false, state.isCheckingOut == false else {
+                return .none
+            }
+
+            state.isCheckingOut = true
+            state.checkoutNotice = nil
+
+            let subtotalText = subtotal(for: state.items).formatted(.currency(code: "USD"))
+            let orderClient = Dependencies().orderClient
+
+            return .task {
+                do {
+                    let orderNumber = try await orderClient.placeOrder()
+                    return .checkoutSucceeded(
+                        orderNumber: orderNumber,
+                        subtotalText: subtotalText
+                    )
+                } catch {
+                    return .checkoutFailed(
+                        error.localizedDescription.isEmpty
+                            ? "Unable to place your order right now."
+                            : error.localizedDescription
+                    )
+                }
+            }
+
+        case let .checkoutSucceeded(orderNumber, subtotalText):
+            state.isCheckingOut = false
+            state.items.removeAll()
+            state.checkoutNotice = State.CheckoutNotice(
+                tone: .success,
+                message: "Order placed #\(orderNumber) · \(subtotalText)"
+            )
+            return .none
+
+        case let .checkoutFailed(message):
+            state.isCheckingOut = false
+            state.checkoutNotice = State.CheckoutNotice(
+                tone: .failure,
+                message: message
+            )
+            return .none
+
+        case .dismissCheckoutNotice:
+            state.checkoutNotice = nil
+            return .none
+        }
+    }
+
+    private static func subtotal(for items: [CartItem]) -> Decimal {
+        items.reduce(0) { partial, item in
+            partial + (item.product.price * Decimal(item.quantity))
         }
     }
 }
