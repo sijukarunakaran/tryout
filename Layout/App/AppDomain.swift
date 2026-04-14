@@ -58,7 +58,7 @@ enum AppDomain: FeatureDomain {
     )
 
     static func applyCatalogDelegate(
-        _ delegate: CatalogFeatureDelegate,
+        _ delegate: CatalogFeatureDomain.Delegate,
         to state: inout State
     ) {
         switch delegate {
@@ -80,7 +80,7 @@ enum AppDomain: FeatureDomain {
     }
 
     private static func syncDerivedState(_ state: inout State) {
-        let projection = makeCatalogFeatureProjection(
+        let projection = CatalogFeatureDomain.makeProjection(
             cart: state.cart,
             shoppingLists: state.shoppingList.lists
         )

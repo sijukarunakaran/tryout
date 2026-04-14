@@ -3,7 +3,7 @@ import StateKit
 
 enum BrowseDomain: FeatureDomain {
     @NonisolatedEquatable
-    struct State: CatalogFeatureState {
+    struct State: CatalogFeatureDomain.State {
         var products = Product.catalog
         var cartQuantities: [Product.ID: Int] = [:]
         var availableShoppingLists: [ShoppingList] = []
@@ -18,11 +18,11 @@ enum BrowseDomain: FeatureDomain {
         case addToListTapped(Product, hasExistingLists: Bool)
         case productDetail(ProductDetailAction)
         case shoppingListFlow(ShoppingListFlowAction)
-        case delegate(CatalogFeatureDelegate)
+        case delegate(CatalogFeatureDomain.Delegate)
     }
 
-    static var catalogAdapter: CatalogFeatureActionAdapter<Action> {
-        CatalogFeatureActionAdapter<Action>(
+    static var catalogAdapter: CatalogFeatureDomain.ActionAdapter<Action> {
+        CatalogFeatureDomain.ActionAdapter<Action>(
             productTapped: {
                 guard case let .productTapped(productID) = $0 else {
                     return nil
@@ -47,21 +47,21 @@ enum BrowseDomain: FeatureDomain {
         )
     }
 
-    static let reducer: Reducer<State, Action> = makeCatalogFeatureReducer(
+    static let reducer: Reducer<State, Action> = CatalogFeatureDomain.makeReducer(
         adapter: catalogAdapter
     )
 
     static func syncProjection(
         _ state: inout State,
-        projection: CatalogFeatureProjection
+        projection: CatalogFeatureDomain.Projection
     ) {
         state.cartQuantities = projection.cartQuantities
         state.availableShoppingLists = projection.shoppingLists
-        syncProductDetail(
+        CatalogFeatureDomain.syncProductDetail(
             &state.productDetail,
             projection: projection
         )
-        syncShoppingListFlow(
+        CatalogFeatureDomain.syncShoppingListFlow(
             &state.shoppingListFlow,
             shoppingLists: projection.shoppingLists
         )
