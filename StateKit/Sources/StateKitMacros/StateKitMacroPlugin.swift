@@ -7,5 +7,6 @@ struct StateKitMacroPlugin: CompilerPlugin {
         CasePathableMacro.self,
         FeatureMacro.self,
         NonisolatedEquatableMacro.self,
+        NestedNonisolatedEquatableMacro.self,
     ]
 }
