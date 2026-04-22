@@ -72,6 +72,47 @@ final class NonisolatedEquatableMacroTests: XCTestCase {
         )
     }
 
+    func testPayloadEnumExpansion() {
+        assertMacroExpansion(
+            """
+            @NonisolatedEquatable
+            enum LoginState {
+                case loggedOut
+                case authenticating(email: String)
+                case failed(message: String, retryCount: Int)
+            }
+            """,
+            expandedSource:
+            """
+            enum LoginState {
+                case loggedOut
+                case authenticating(email: String)
+                case failed(message: String, retryCount: Int)
+            }
+
+            extension LoginState: Equatable {
+                nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+                    switch (lhs, rhs) {
+                    case (.loggedOut, .loggedOut):
+                        true
+                    case let (.authenticating(email: lhs_email), .authenticating(email: rhs_email)):
+                        lhs_email == rhs_email
+                    case let (.failed(message: lhs_message, retryCount: lhs_retryCount), .failed(message: rhs_message, retryCount: rhs_retryCount)):
+                        lhs_message == rhs_message
+                        && lhs_retryCount == rhs_retryCount
+                    default:
+                        false
+                    }
+                }
+            }
+            """,
+            macros: [
+                "NonisolatedEquatable": NonisolatedEquatableMacro.self,
+                "_NestedNonisolatedEquatable": NestedNonisolatedEquatableMacro.self,
+            ]
+        )
+    }
+
     func testNestedStructReceivesMacro() {
         assertMacroExpansion(
             """

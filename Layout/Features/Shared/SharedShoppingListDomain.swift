@@ -1,57 +1,49 @@
 import Foundation
 import StateKit
 
-enum CatalogFeatureDomain {
+enum SharedShoppingListDomain {
     enum Delegate: Sendable {
-        case addToCart(Product)
         case addProductToList(Product, ShoppingList.ID)
         case createList(name: String, product: Product?)
     }
 
+    struct Projection: Sendable {
+        var shoppingLists: [ShoppingList]
+    }
+
     protocol State: Sendable {
-        var products: [Product] { get set }
-        var cartQuantities: [Product.ID: Int] { get set }
         var availableShoppingLists: [ShoppingList] { get set }
         var productDetail: ProductDetailState? { get set }
         var shoppingListFlow: ShoppingListFlowState? { get set }
     }
 
-    struct Projection: Sendable {
-        var cartQuantities: [Product.ID: Int]
-        var shoppingLists: [ShoppingList]
-    }
-
     struct ActionAdapter<Action: Sendable> {
-        var productTapped: @Sendable (Action) -> Product.ID?
-        var addToCartTapped: @Sendable (Action) -> Product?
+        var projectionUpdated: @Sendable (Action) -> Projection?
         var addToListTapped: @Sendable (Action) -> (product: Product, hasExistingLists: Bool)?
         var productDetail: CasePath<Action, ProductDetailAction>
         var shoppingListFlow: CasePath<Action, ShoppingListFlowAction>
         var delegate: @Sendable (Delegate) -> Action
     }
 
-    static func makeReducer<State: CatalogFeatureDomain.State, Action: Sendable>(
+    static func makeReducer<State: SharedShoppingListDomain.State, Action: Sendable>(
         adapter: ActionAdapter<Action>
     ) -> Reducer<State, Action> {
         Reducer<State, Action>.combine(
-            productDetailReducer.optional.scope(
-                state: \.productDetail,
-                action: adapter.productDetail
-            ),
             shoppingListFlowReducer.optional.scope(
                 state: \.shoppingListFlow,
                 action: adapter.shoppingListFlow
             ),
             Reducer<State, Action> { state, action in
-                if let productID = adapter.productTapped(action) {
-                    guard let product = state.products.first(where: { $0.id == productID }) else {
-                        return .none
+                if let projection = adapter.projectionUpdated(action) {
+                    state.availableShoppingLists = projection.shoppingLists
+
+                    if var detail = state.productDetail {
+                        detail.availableShoppingLists = projection.shoppingLists
+                        detail.shoppingListFlow?.availableLists = projection.shoppingLists
+                        state.productDetail = detail
                     }
-                    state.productDetail = ProductDetailState(
-                        product: product,
-                        cartQuantity: state.cartQuantities[product.id] ?? 0,
-                        availableShoppingLists: state.availableShoppingLists
-                    )
+
+                    state.shoppingListFlow?.availableLists = projection.shoppingLists
                     return .none
                 }
 
@@ -65,19 +57,8 @@ enum CatalogFeatureDomain {
                     return .none
                 }
 
-                if let product = adapter.addToCartTapped(action) {
-                    return .task {
-                        adapter.delegate(.addToCart(product))
-                    }
-                }
-
                 if let detailAction = adapter.productDetail.extract(action) {
                     switch detailAction {
-                    case let .addToCartTapped(product):
-                        return .task {
-                            adapter.delegate(.addToCart(product))
-                        }
-
                     case let .shoppingListFlow(.listSelected(listID)):
                         guard let product = state.productDetail?.shoppingListFlow?.product else {
                             return .none
@@ -96,11 +77,7 @@ enum CatalogFeatureDomain {
                             adapter.delegate(.createList(name: flow.draftListName, product: flow.product))
                         }
 
-                    case .dismissed:
-                        state.productDetail = nil
-                        return .none
-
-                    case .addToListTapped, .shoppingListFlow:
+                    case .dismissed, .addToCartTapped, .addToListTapped, .shoppingListFlow(.dismissed), .shoppingListFlow(.createNewListTapped), .shoppingListFlow(.draftListNameChanged):
                         return .none
                     }
                 }
@@ -139,33 +116,7 @@ enum CatalogFeatureDomain {
         )
     }
 
-    static func makeProjection(
-        cart: CartState,
-        shoppingLists: [ShoppingList]
-    ) -> Projection {
-        Projection(
-            cartQuantities: Dictionary(
-                uniqueKeysWithValues: cart.items.map { ($0.product.id, $0.quantity) }
-            ),
-            shoppingLists: shoppingLists
-        )
-    }
-
-    static func syncProductDetail(
-        _ state: inout ProductDetailState?,
-        projection: Projection
-    ) {
-        guard var detail = state else { return }
-        detail.cartQuantity = projection.cartQuantities[detail.product.id] ?? 0
-        detail.availableShoppingLists = projection.shoppingLists
-        syncShoppingListFlow(&detail.shoppingListFlow, shoppingLists: projection.shoppingLists)
-        state = detail
-    }
-
-    static func syncShoppingListFlow(
-        _ state: inout ShoppingListFlowState?,
-        shoppingLists: [ShoppingList]
-    ) {
-        state?.availableLists = shoppingLists
+    static func makeProjection(shoppingLists: [ShoppingList]) -> Projection {
+        Projection(shoppingLists: shoppingLists)
     }
 }

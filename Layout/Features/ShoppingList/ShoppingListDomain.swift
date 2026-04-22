@@ -52,6 +52,7 @@ let shoppingListFlowReducer = ShoppingListFlowDomain.reducer
 enum ShoppingListDomain {
     @NonisolatedEquatable
     struct State: Sendable {
+        var isAuthenticated = false
         var lists: [ShoppingList] = []
         var cartQuantities: [Product.ID: Int] = [:]
         var shoppingListFlow: ShoppingListFlowState?
@@ -59,11 +60,15 @@ enum ShoppingListDomain {
 
     @CasePathable
     enum Action: Sendable {
+        case authProjectionUpdated(SharedLoginDomain.Projection)
+        case cartProjectionUpdated(SharedCartDomain.Projection)
         case createListButtonTapped
         case createList(name: String, product: Product?)
         case addProductToList(Product, ShoppingList.ID)
         case addToCartTapped(Product)
         case shoppingListFlow(ShoppingListFlowAction)
+        case loginRequired(SharedLoginDomain.ProtectedAction)
+        case cartDelegate(SharedCartDomain.Delegate)
     }
 
     static let reducer = Reducer<State, Action>.combine(
@@ -73,7 +78,20 @@ enum ShoppingListDomain {
         ),
         Reducer<State, Action> { state, action in
             switch action {
+            case let .authProjectionUpdated(projection):
+                state.isAuthenticated = projection.isAuthenticated
+                return .none
+
+            case let .cartProjectionUpdated(projection):
+                state.cartQuantities = projection.cartQuantities
+                return .none
+
             case .createListButtonTapped:
+                guard state.isAuthenticated else {
+                    return .task {
+                        .loginRequired(.startCreateList)
+                    }
+                }
                 state.shoppingListFlow = ShoppingListFlowState(
                     id: UUID(),
                     product: nil,
@@ -146,10 +164,17 @@ enum ShoppingListDomain {
                 state.shoppingListFlow = nil
                 return .none
 
-            case .addToCartTapped:
-                return .none
+            case let .addToCartTapped(product):
+                guard state.isAuthenticated else {
+                    return .task {
+                        .loginRequired(.addToCart(product))
+                    }
+                }
+                return .task {
+                    .cartDelegate(.addToCart(product))
+                }
 
-            case .shoppingListFlow:
+            case .shoppingListFlow, .loginRequired, .cartDelegate:
                 return .none
             }
         }

@@ -1,6 +1,7 @@
 import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
+import Foundation
 
 struct NonisolatedEquatableMacro: ExtensionMacro, MemberAttributeMacro {
     static func expansion(
@@ -99,7 +100,7 @@ private enum NonisolatedEquatableMacroSupport {
             return try [makeEnumExtension(type: type, enumDecl: enumDecl)]
         }
 
-        throw MacroError.message("@NonisolatedEquatable can only be applied to a struct or payload-free enum.")
+        throw MacroError.message("@NonisolatedEquatable can only be applied to a struct or enum.")
     }
 
     static func makeStructExtension(
@@ -132,34 +133,21 @@ private enum NonisolatedEquatableMacroSupport {
         type: some TypeSyntaxProtocol,
         enumDecl: EnumDeclSyntax
     ) throws -> ExtensionDeclSyntax {
-        let cases = enumDecl.memberBlock.members.compactMap { member -> String? in
+        let cases = enumDecl.memberBlock.members.compactMap { member -> [String]? in
             guard let caseDecl = member.decl.as(EnumCaseDeclSyntax.self) else {
                 return nil
             }
-            guard caseDecl.elements.allSatisfy({ $0.parameterClause == nil }) else {
-                return nil
-            }
-            return caseDecl.elements.map(\.name.text).joined(separator: "\u{0}")
+            return caseDecl.elements.map(makeEnumCaseComparison)
         }
-        .flatMap { $0.split(separator: "\u{0}").map(String.init) }
+        .flatMap { $0 }
 
         guard cases.isEmpty == false else {
-            throw MacroError.message("@NonisolatedEquatable requires at least one payload-free enum case.")
-        }
-
-        let hasPayloadCase = enumDecl.memberBlock.members.contains { member in
-            guard let caseDecl = member.decl.as(EnumCaseDeclSyntax.self) else {
-                return false
-            }
-            return caseDecl.elements.contains { $0.parameterClause != nil }
-        }
-        guard hasPayloadCase == false else {
-            throw MacroError.message("@NonisolatedEquatable does not support enums with associated values.")
+            throw MacroError.message("@NonisolatedEquatable requires at least one enum case.")
         }
 
         let comparisons = """
         switch (lhs, rhs) {
-        \(cases.map { "        case (.\($0), .\($0)):\n            true" }.joined(separator: "\n"))
+        \(cases.joined(separator: "\n"))
         default:
             false
         }
@@ -200,6 +188,66 @@ private enum NonisolatedEquatableMacroSupport {
         )
     }
 
+    static func makeEnumCaseComparison(_ element: EnumCaseElementSyntax) -> String {
+        let caseName = element.name.text
+        guard let parameterClause = element.parameterClause else {
+            return """
+                    case (.\(caseName), .\(caseName)):
+                        true
+            """
+        }
+
+        let bindings = parameterClause.parameters.enumerated().map { index, parameter in
+            let patternName = parameter.firstName?.text
+            let baseName = bindingName(for: parameter, index: index)
+            return (
+                lhs: "lhs_\(baseName)",
+                rhs: "rhs_\(baseName)",
+                pattern: patternName == "_" ? nil : patternName
+            )
+        }
+
+        let lhsPattern = bindings.map { binding in
+            if let pattern = binding.pattern {
+                return "\(pattern): \(binding.lhs)"
+            }
+            return binding.lhs
+        }
+        .joined(separator: ", ")
+
+        let rhsPattern = bindings.map { binding in
+            if let pattern = binding.pattern {
+                return "\(pattern): \(binding.rhs)"
+            }
+            return binding.rhs
+        }
+        .joined(separator: ", ")
+
+        let comparisons = bindings.isEmpty
+            ? "true"
+            : bindings.enumerated().map { index, binding in
+                let prefix = index == 0 ? "" : "            && "
+                return "\(prefix)\(binding.lhs) == \(binding.rhs)"
+            }
+            .joined(separator: "\n")
+
+        return """
+                case let (.\(caseName)(\(lhsPattern)), .\(caseName)(\(rhsPattern))):
+                    \(comparisons)
+        """
+    }
+
+    static func bindingName(for parameter: EnumCaseParameterSyntax, index: Int) -> String {
+        let candidate = parameter.secondName?.text ?? parameter.firstName?.text ?? "value\(index)"
+        let sanitized = String(candidate.map { character in
+            character.isLetter || character.isNumber || character == "_" ? character : "_"
+        })
+        if sanitized.isEmpty || sanitized == "_" {
+            return "value\(index)"
+        }
+        return sanitized
+    }
+
     static func hasAttribute(_ attributes: AttributeListSyntax?, named name: String) -> Bool {
         attributes?.contains(where: { element in
             guard case let .attribute(attribute) = element else { return false }
@@ -211,17 +259,7 @@ private enum NonisolatedEquatableMacroSupport {
         if member.as(StructDeclSyntax.self) != nil {
             return true
         }
-        guard let enumDecl = member.as(EnumDeclSyntax.self) else {
-            return false
-        }
-
-        let cases = enumDecl.memberBlock.members.compactMap { $0.decl.as(EnumCaseDeclSyntax.self) }
-        guard cases.isEmpty == false else {
-            return false
-        }
-        return cases.allSatisfy { caseDecl in
-            caseDecl.elements.allSatisfy { $0.parameterClause == nil }
-        }
+        return member.as(EnumDeclSyntax.self) != nil
     }
 
     static func attributes(of member: some DeclSyntaxProtocol) -> AttributeListSyntax? {

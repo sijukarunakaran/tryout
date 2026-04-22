@@ -2,12 +2,16 @@ import StateKit
 import SwiftUI
 
 struct AppRootView: View {
-    @StateObject private var store = Store(
+    @StateObject private var store = Store<AppState, AppAction>(
         initialState: AppState(),
         reducer: AppDomain.reducer
     )
 
     var body: some View {
+        let loginStore = store.ifLet(
+            state: \.login,
+            action: AppAction.login
+        )
         let homeStore = store.scope(
             state: { @Sendable appState in
                 appState.home
@@ -73,6 +77,19 @@ struct AppRootView: View {
             .tag(AppTab.shoppingLists)
         }
         .tint(Color(red: 0.13, green: 0.39, blue: 0.28))
+        .sheet(
+            item: Binding(
+                get: { store.state.login },
+                set: { newValue in
+                    guard newValue == nil else { return }
+                    store.send(.login(.cancelTapped))
+                }
+            )
+        ) { _ in
+            if let loginStore {
+                LoginView(store: loginStore)
+            }
+        }
     }
 
     private var cartItemCount: Int {

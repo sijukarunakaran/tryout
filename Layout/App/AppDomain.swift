@@ -1,3 +1,4 @@
+import Foundation
 import StateKit
 
 @Feature
@@ -5,6 +6,9 @@ enum AppDomain {
     @NonisolatedEquatable
     struct State: Sendable {
         var selectedTab: AppTab = .home
+        var isAuthenticated = false
+        var pendingProtectedAction: SharedLoginDomain.ProtectedAction?
+        var login: LoginState?
         var browse = BrowseState()
         var home = HomeState()
         var cart = CartState()
@@ -18,9 +22,14 @@ enum AppDomain {
         case home(HomeAction)
         case cart(CartAction)
         case shoppingList(ShoppingListAction)
+        case login(LoginAction)
     }
 
     static let reducer = Reducer<State, Action>.combine(
+        loginReducer.optional.scope(
+            state: \.login,
+            action: Action.login
+        ),
         BrowseDomain.reducer.scope(
             state: \.browse,
             action: Action.browse
@@ -41,54 +50,179 @@ enum AppDomain {
             switch action {
             case let .selectedTabChanged(tab):
                 state.selectedTab = tab
+                return .none
 
-            case let .home(.delegate(delegate)),
-                let .browse(.delegate(delegate)):
-                applyCatalogDelegate(delegate, to: &state)
+            case let .home(.loginRequired(protectedAction)),
+                let .browse(.loginRequired(protectedAction)),
+                let .shoppingList(.loginRequired(protectedAction)):
+                guard state.isAuthenticated == false else {
+                    return .task {
+                        protectedActionAction(for: protectedAction)
+                    }
+                }
+                state.pendingProtectedAction = protectedAction
+                if state.login == nil {
+                    state.login = LoginState(id: UUID())
+                }
+                return .none
 
-            case let .shoppingList(.addToCartTapped(product)):
-                _ = CartDomain.reducer.reduce(&state.cart, .add(product))
+            case let .home(.cartDelegate(delegate)),
+                let .browse(.cartDelegate(delegate)),
+                let .shoppingList(.cartDelegate(delegate)):
+                return .task {
+                    cartAction(for: delegate)
+                }
 
-            case .browse, .home, .cart, .shoppingList:
-                break
+            case let .home(.shoppingListDelegate(delegate)),
+                let .browse(.shoppingListDelegate(delegate)):
+                guard state.isAuthenticated else {
+                    let protectedAction = protectedAction(for: delegate)
+                    state.pendingProtectedAction = protectedAction
+                    if state.login == nil {
+                        state.login = LoginState(id: UUID())
+                    }
+                    return .none
+                }
+                return .task {
+                    shoppingListAction(for: delegate)
+                }
+
+            case .login(.delegate(.signedIn)):
+                state.isAuthenticated = true
+                state.login = nil
+                let authActions = authProjectionActions(isAuthenticated: true)
+                if let protectedAction = state.pendingProtectedAction {
+                    state.pendingProtectedAction = nil
+                    return .task {
+                        authActions + [protectedActionAction(for: protectedAction)]
+                    }
+                }
+                return .task {
+                    authActions
+                }
+
+            case .login(.delegate(.cancelled)):
+                state.login = nil
+                state.pendingProtectedAction = nil
+                return .none
+
+            case .cart:
+                let projection = SharedCartDomain.makeProjection(cart: state.cart)
+                return .task {
+                    cartProjectionActions(for: projection)
+                }
+
+            case .shoppingList:
+                guard shouldSyncShoppingListProjection(after: action) else {
+                    return .none
+                }
+                let projection = SharedShoppingListDomain.makeProjection(
+                    shoppingLists: state.shoppingList.lists
+                )
+                return .task {
+                    shoppingListProjectionActions(for: projection)
+                }
+
+            case .browse, .home, .login:
+                return .none
             }
-
-            syncDerivedState(&state)
-            return .none
         }
     )
 
-    static func applyCatalogDelegate(
-        _ delegate: CatalogFeatureDomain.Delegate,
-        to state: inout State
-    ) {
+    nonisolated static func cartAction(
+        for delegate: SharedCartDomain.Delegate
+    ) -> Action {
         switch delegate {
         case let .addToCart(product):
-            _ = CartDomain.reducer.reduce(&state.cart, .add(product))
-
-        case let .addProductToList(product, listID):
-            _ = ShoppingListDomain.reducer.reduce(
-                &state.shoppingList,
-                .addProductToList(product, listID)
-            )
-
-        case let .createList(name, product):
-            _ = ShoppingListDomain.reducer.reduce(
-                &state.shoppingList,
-                .createList(name: name, product: product)
-            )
+            .cart(.add(product))
         }
     }
 
-    private static func syncDerivedState(_ state: inout State) {
-        let projection = CatalogFeatureDomain.makeProjection(
-            cart: state.cart,
-            shoppingLists: state.shoppingList.lists
-        )
+    nonisolated static func shoppingListAction(
+        for delegate: SharedShoppingListDomain.Delegate
+    ) -> Action {
+        switch delegate {
+        case let .addProductToList(product, listID):
+            .shoppingList(.addProductToList(product, listID))
 
-        HomeDomain.syncProjection(&state.home, projection: projection)
-        BrowseDomain.syncProjection(&state.browse, projection: projection)
-        state.shoppingList.cartQuantities = projection.cartQuantities
+        case let .createList(name, product):
+            .shoppingList(.createList(name: name, product: product))
+        }
+    }
+
+    nonisolated static func protectedAction(
+        for delegate: SharedShoppingListDomain.Delegate
+    ) -> SharedLoginDomain.ProtectedAction {
+        switch delegate {
+        case let .addProductToList(product, listID):
+            .addProductToList(product, listID)
+
+        case let .createList(name, product):
+            .createList(name: name, product: product)
+        }
+    }
+
+    nonisolated static func protectedActionAction(
+        for protectedAction: SharedLoginDomain.ProtectedAction
+    ) -> Action {
+        switch protectedAction {
+        case let .addToCart(product):
+            .cart(.add(product))
+
+        case let .addProductToList(product, listID):
+            .shoppingList(.addProductToList(product, listID))
+
+        case let .createList(name, product):
+            .shoppingList(.createList(name: name, product: product))
+
+        case .startCreateList:
+            .shoppingList(.createListButtonTapped)
+        }
+    }
+
+    nonisolated static func cartProjectionActions(
+        for projection: SharedCartDomain.Projection
+    ) -> [Action] {
+        [
+            .home(.cartProjectionUpdated(projection)),
+            .browse(.cartProjectionUpdated(projection)),
+            .shoppingList(.cartProjectionUpdated(projection))
+        ]
+    }
+
+    nonisolated static func authProjectionActions(
+        isAuthenticated: Bool
+    ) -> [Action] {
+        let projection = SharedLoginDomain.Projection(isAuthenticated: isAuthenticated)
+        return [
+            .home(.authProjectionUpdated(projection)),
+            .browse(.authProjectionUpdated(projection)),
+            .shoppingList(.authProjectionUpdated(projection))
+        ]
+    }
+
+    nonisolated static func shoppingListProjectionActions(
+        for projection: SharedShoppingListDomain.Projection
+    ) -> [Action] {
+        [
+            .home(.shoppingListProjectionUpdated(projection)),
+            .browse(.shoppingListProjectionUpdated(projection))
+        ]
+    }
+
+    nonisolated static func shouldSyncShoppingListProjection(
+        after action: Action
+    ) -> Bool {
+        switch action {
+        case .shoppingList(.cartProjectionUpdated), .shoppingList(.cartDelegate):
+            false
+
+        case .shoppingList:
+            true
+
+        case .selectedTabChanged, .browse, .home, .cart, .login:
+            false
+        }
     }
 }
 

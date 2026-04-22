@@ -4,8 +4,9 @@ import StateKit
 @Feature
 enum BrowseDomain {
     @NonisolatedEquatable
-    struct State: CatalogFeatureDomain.State, Sendable {
+    struct State: SharedCartDomain.State, SharedShoppingListDomain.State, Sendable {
         var products = Product.catalog
+        var isAuthenticated = false
         var cartQuantities: [Product.ID: Int] = [:]
         var availableShoppingLists: [ShoppingList] = []
         var productDetail: ProductDetailState?
@@ -14,16 +15,33 @@ enum BrowseDomain {
 
     @CasePathable
     enum Action: Sendable {
+        case authProjectionUpdated(SharedLoginDomain.Projection)
+        case cartProjectionUpdated(SharedCartDomain.Projection)
+        case shoppingListProjectionUpdated(SharedShoppingListDomain.Projection)
         case productTapped(Product.ID)
         case addToCartTapped(Product)
         case addToListTapped(Product, hasExistingLists: Bool)
         case productDetail(ProductDetailAction)
         case shoppingListFlow(ShoppingListFlowAction)
-        case delegate(CatalogFeatureDomain.Delegate)
+        case loginRequired(SharedLoginDomain.ProtectedAction)
+        case cartDelegate(SharedCartDomain.Delegate)
+        case shoppingListDelegate(SharedShoppingListDomain.Delegate)
     }
 
-    static var catalogAdapter: CatalogFeatureDomain.ActionAdapter<Action> {
-        CatalogFeatureDomain.ActionAdapter<Action>(
+    static var cartAdapter: SharedCartDomain.ActionAdapter<Action> {
+        SharedCartDomain.ActionAdapter<Action>(
+            authProjectionUpdated: {
+                guard case let .authProjectionUpdated(projection) = $0 else {
+                    return nil
+                }
+                return projection
+            },
+            projectionUpdated: {
+                guard case let .cartProjectionUpdated(projection) = $0 else {
+                    return nil
+                }
+                return projection
+            },
             productTapped: {
                 guard case let .productTapped(productID) = $0 else {
                     return nil
@@ -36,6 +54,20 @@ enum BrowseDomain {
                 }
                 return product
             },
+            productDetail: Action.productDetail,
+            loginRequired: Action.loginRequired,
+            delegate: Action.cartDelegate
+        )
+    }
+
+    static var shoppingListAdapter: SharedShoppingListDomain.ActionAdapter<Action> {
+        SharedShoppingListDomain.ActionAdapter<Action>(
+            projectionUpdated: {
+                guard case let .shoppingListProjectionUpdated(projection) = $0 else {
+                    return nil
+                }
+                return projection
+            },
             addToListTapped: {
                 guard case let .addToListTapped(product, hasExistingLists) = $0 else {
                     return nil
@@ -44,29 +76,14 @@ enum BrowseDomain {
             },
             productDetail: Action.productDetail,
             shoppingListFlow: Action.shoppingListFlow,
-            delegate: Action.delegate
+            delegate: Action.shoppingListDelegate
         )
     }
 
-    static let reducer: Reducer<State, Action> = CatalogFeatureDomain.makeReducer(
-        adapter: catalogAdapter
+    static let reducer: Reducer<State, Action> = .combine(
+        SharedCartDomain.makeReducer(adapter: cartAdapter),
+        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter)
     )
-
-    static func syncProjection(
-        _ state: inout State,
-        projection: CatalogFeatureDomain.Projection
-    ) {
-        state.cartQuantities = projection.cartQuantities
-        state.availableShoppingLists = projection.shoppingLists
-        CatalogFeatureDomain.syncProductDetail(
-            &state.productDetail,
-            projection: projection
-        )
-        CatalogFeatureDomain.syncShoppingListFlow(
-            &state.shoppingListFlow,
-            shoppingLists: projection.shoppingLists
-        )
-    }
 }
 
 typealias BrowseState = BrowseDomain.State
