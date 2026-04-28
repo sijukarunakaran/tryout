@@ -6,8 +6,8 @@ import PackageDescription
 let package = Package(
     name: "StateKit",
     platforms: [
-        .iOS(.v13),
-        .macOS(.v10_15),
+        .iOS(.v17),
+        .macOS(.v14),
     ],
     products: [
         .library(

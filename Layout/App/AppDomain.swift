@@ -26,7 +26,7 @@ enum AppDomain {
     }
 
     static let reducer = Reducer<State, Action>.combine(
-        loginReducer.optional.scope(
+        LoginDomain.reducer.optional.scope(
             state: \.login,
             action: Action.login
         ),

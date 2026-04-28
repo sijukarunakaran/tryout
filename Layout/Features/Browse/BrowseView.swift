@@ -2,7 +2,7 @@ import StateKit
 import SwiftUI
 
 struct BrowseView: View {
-    @ObservedObject var store: Store<BrowseState, BrowseAction>
+    var store: Store<BrowseState, BrowseAction>
 
     var body: some View {
         let productDetailStore = store.ifLet(
@@ -27,18 +27,13 @@ struct BrowseView: View {
                                     product: product,
                                     quantityInCart: quantityInCart,
                                     openDetail: {
-                                        store.send(.productTapped(product.id))
+                                        store.send(.productTapped(product))
                                     },
                                     addToCart: {
                                         store.send(.addToCartTapped(product))
                                     },
                                     addToList: {
-                                        store.send(
-                                            .addToListTapped(
-                                                product,
-                                                hasExistingLists: store.state.availableShoppingLists.isEmpty == false
-                                            )
-                                        )
+                                        store.send(.addToListTapped(product))
                                     }
                                 )
                             }

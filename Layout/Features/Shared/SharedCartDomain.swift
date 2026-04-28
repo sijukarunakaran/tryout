@@ -11,38 +11,44 @@ enum SharedCartDomain {
     }
 
     protocol State: Sendable {
-        var products: [Product] { get set }
-        var isAuthenticated: Bool { get set }
         var cartQuantities: [Product.ID: Int] { get set }
-        var availableShoppingLists: [ShoppingList] { get }
-        var productDetail: ProductDetailState? { get set }
     }
 
     struct ActionAdapter<Action: Sendable> {
-        var authProjectionUpdated: @Sendable (Action) -> SharedLoginDomain.Projection?
-        var projectionUpdated: @Sendable (Action) -> Projection?
-        var productTapped: @Sendable (Action) -> Product.ID?
-        var addToCartTapped: @Sendable (Action) -> Product?
+        var authProjectionUpdated: CasePath<Action, SharedLoginDomain.Projection>
+        var projectionUpdated: CasePath<Action, Projection>
+        var productTapped: CasePath<Action, Product>
+        var addToCartTapped: CasePath<Action, Product>
         var productDetail: CasePath<Action, ProductDetailAction>
-        var loginRequired: @Sendable (SharedLoginDomain.ProtectedAction) -> Action
-        var delegate: @Sendable (Delegate) -> Action
+        var loginRequired: CasePath<Action, SharedLoginDomain.ProtectedAction>
+        var delegate: CasePath<Action, Delegate>
     }
 
-    static func makeReducer<State: SharedCartDomain.State, Action: Sendable>(
+    static func makeReducer<
+        State: SharedCartDomain.State & SharedLoginDomain.State & SharedShoppingListDomain.State,
+        Action: Sendable
+    >(
         adapter: ActionAdapter<Action>
     ) -> Reducer<State, Action> {
-        Reducer<State, Action>.combine(
+        func addToCart(_ product: Product, isAuthenticated: Bool) -> Effect<Action> {
+            guard isAuthenticated else {
+                return .task { adapter.loginRequired.embed(.addToCart(product)) }
+            }
+            return .task { adapter.delegate.embed(.addToCart(product)) }
+        }
+
+        return Reducer<State, Action>.combine(
             productDetailReducer.optional.scope(
                 state: \.productDetail,
                 action: adapter.productDetail
             ),
             Reducer<State, Action> { state, action in
-                if let authProjection = adapter.authProjectionUpdated(action) {
+                if let authProjection = adapter.authProjectionUpdated.extract(action) {
                     state.isAuthenticated = authProjection.isAuthenticated
                     return .none
                 }
 
-                if let projection = adapter.projectionUpdated(action) {
+                if let projection = adapter.projectionUpdated.extract(action) {
                     state.cartQuantities = projection.cartQuantities
 
                     if var detail = state.productDetail {
@@ -52,10 +58,7 @@ enum SharedCartDomain {
                     return .none
                 }
 
-                if let productID = adapter.productTapped(action) {
-                    guard let product = state.products.first(where: { $0.id == productID }) else {
-                        return .none
-                    }
+                if let product = adapter.productTapped.extract(action) {
                     state.productDetail = ProductDetailState(
                         product: product,
                         cartQuantity: state.cartQuantities[product.id] ?? 0,
@@ -64,28 +67,14 @@ enum SharedCartDomain {
                     return .none
                 }
 
-                if let product = adapter.addToCartTapped(action) {
-                    guard state.isAuthenticated else {
-                        return .task {
-                            adapter.loginRequired(.addToCart(product))
-                        }
-                    }
-                    return .task {
-                        adapter.delegate(.addToCart(product))
-                    }
+                if let product = adapter.addToCartTapped.extract(action) {
+                    return addToCart(product, isAuthenticated: state.isAuthenticated)
                 }
 
                 if let detailAction = adapter.productDetail.extract(action) {
                     switch detailAction {
                     case let .addToCartTapped(product):
-                        guard state.isAuthenticated else {
-                            return .task {
-                                adapter.loginRequired(.addToCart(product))
-                            }
-                        }
-                        return .task {
-                            adapter.delegate(.addToCart(product))
-                        }
+                        return addToCart(product, isAuthenticated: state.isAuthenticated)
 
                     case .dismissed:
                         state.productDetail = nil

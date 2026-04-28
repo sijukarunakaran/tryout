@@ -2,7 +2,7 @@ import StateKit
 import SwiftUI
 
 struct CartView: View {
-    @ObservedObject var store: Store<CartState, CartAction>
+    var store: Store<CartState, CartAction>
 
     var body: some View {
         NavigationStack {

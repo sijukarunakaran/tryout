@@ -7,7 +7,7 @@ enum ProductDetailDomain {
     enum Action: Sendable {
         case dismissed
         case addToCartTapped(Product)
-        case addToListTapped(Bool)
+        case addToListTapped
         case shoppingListFlow(ShoppingListFlowAction)
     }
 
@@ -30,11 +30,11 @@ enum ProductDetailDomain {
         ),
         Reducer<State, Action> { state, action in
             switch action {
-            case let .addToListTapped(hasExistingLists):
+            case .addToListTapped:
                 state.shoppingListFlow = ShoppingListFlowState(
                     id: UUID(),
                     product: state.product,
-                    mode: hasExistingLists ? .picker : .create,
+                    mode: state.availableShoppingLists.isEmpty ? .create : .picker,
                     availableLists: state.availableShoppingLists
                 )
                 return .none

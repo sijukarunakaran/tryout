@@ -4,7 +4,7 @@ import StateKit
 @Feature
 enum BrowseDomain {
     @NonisolatedEquatable
-    struct State: SharedCartDomain.State, SharedShoppingListDomain.State, Sendable {
+    struct State: SharedLoginDomain.State, SharedCartDomain.State, SharedShoppingListDomain.State, Sendable {
         var products = Product.catalog
         var isAuthenticated = false
         var cartQuantities: [Product.ID: Int] = [:]
@@ -18,9 +18,9 @@ enum BrowseDomain {
         case authProjectionUpdated(SharedLoginDomain.Projection)
         case cartProjectionUpdated(SharedCartDomain.Projection)
         case shoppingListProjectionUpdated(SharedShoppingListDomain.Projection)
-        case productTapped(Product.ID)
+        case productTapped(Product)
         case addToCartTapped(Product)
-        case addToListTapped(Product, hasExistingLists: Bool)
+        case addToListTapped(Product)
         case productDetail(ProductDetailAction)
         case shoppingListFlow(ShoppingListFlowAction)
         case loginRequired(SharedLoginDomain.ProtectedAction)
@@ -30,30 +30,10 @@ enum BrowseDomain {
 
     static var cartAdapter: SharedCartDomain.ActionAdapter<Action> {
         SharedCartDomain.ActionAdapter<Action>(
-            authProjectionUpdated: {
-                guard case let .authProjectionUpdated(projection) = $0 else {
-                    return nil
-                }
-                return projection
-            },
-            projectionUpdated: {
-                guard case let .cartProjectionUpdated(projection) = $0 else {
-                    return nil
-                }
-                return projection
-            },
-            productTapped: {
-                guard case let .productTapped(productID) = $0 else {
-                    return nil
-                }
-                return productID
-            },
-            addToCartTapped: {
-                guard case let .addToCartTapped(product) = $0 else {
-                    return nil
-                }
-                return product
-            },
+            authProjectionUpdated: Action.authProjectionUpdated,
+            projectionUpdated: Action.cartProjectionUpdated,
+            productTapped: Action.productTapped,
+            addToCartTapped: Action.addToCartTapped,
             productDetail: Action.productDetail,
             loginRequired: Action.loginRequired,
             delegate: Action.cartDelegate
@@ -62,18 +42,8 @@ enum BrowseDomain {
 
     static var shoppingListAdapter: SharedShoppingListDomain.ActionAdapter<Action> {
         SharedShoppingListDomain.ActionAdapter<Action>(
-            projectionUpdated: {
-                guard case let .shoppingListProjectionUpdated(projection) = $0 else {
-                    return nil
-                }
-                return projection
-            },
-            addToListTapped: {
-                guard case let .addToListTapped(product, hasExistingLists) = $0 else {
-                    return nil
-                }
-                return (product, hasExistingLists)
-            },
+            projectionUpdated: Action.shoppingListProjectionUpdated,
+            addToListTapped: Action.addToListTapped,
             productDetail: Action.productDetail,
             shoppingListFlow: Action.shoppingListFlow,
             delegate: Action.shoppingListDelegate

@@ -1,19 +1,13 @@
-import XCTest
+import Testing
 @testable import StateKit
 
-final class ReducerScopingTests: XCTestCase {
-    func testScopeRoutesChildActionToChildReducer() {
-        struct ChildState: Equatable, Sendable {
-            var count = 0
-        }
-
-        struct ParentState: Equatable, Sendable {
-            var child = ChildState()
-        }
-
-        enum ChildAction: Sendable {
-            case increment
-        }
+@Suite("Reducer Scoping")
+struct ReducerScopingTests {
+    @Test("scope routes child action to child reducer")
+    func scopeRoutesChildAction() {
+        struct ChildState: Equatable, Sendable { var count = 0 }
+        struct ParentState: Equatable, Sendable { var child = ChildState() }
+        enum ChildAction: Sendable { case increment }
 
         @CasePathable
         enum ParentAction: Sendable {
@@ -23,35 +17,22 @@ final class ReducerScopingTests: XCTestCase {
 
         let childReducer = Reducer<ChildState, ChildAction> { state, action in
             switch action {
-            case .increment:
-                state.count += 1
-                return .none
+            case .increment: state.count += 1; return .none
             }
         }
 
-        let reducer = childReducer.scope(
-            state: \ParentState.child,
-            action: ParentAction.child
-        )
-
+        let reducer = childReducer.scope(state: \ParentState.child, action: ParentAction.child)
         var state = ParentState()
         _ = reducer.reduce(&state, ParentAction.child(.increment))
 
-        XCTAssertEqual(state.child.count, 1)
+        #expect(state.child.count == 1)
     }
 
-    func testScopeIgnoresUnrelatedAction() {
-        struct ChildState: Equatable, Sendable {
-            var count = 0
-        }
-
-        struct ParentState: Equatable, Sendable {
-            var child = ChildState()
-        }
-
-        enum ChildAction: Sendable {
-            case increment
-        }
+    @Test("scope ignores unrelated action")
+    func scopeIgnoresUnrelated() {
+        struct ChildState: Equatable, Sendable { var count = 0 }
+        struct ParentState: Equatable, Sendable { var child = ChildState() }
+        enum ChildAction: Sendable { case increment }
 
         @CasePathable
         enum ParentAction: Sendable {
@@ -61,27 +42,20 @@ final class ReducerScopingTests: XCTestCase {
 
         let childReducer = Reducer<ChildState, ChildAction> { state, action in
             switch action {
-            case .increment:
-                state.count += 1
-                return .none
+            case .increment: state.count += 1; return .none
             }
         }
 
-        let reducer = childReducer.scope(
-            state: \ParentState.child,
-            action: ParentAction.child
-        )
-
+        let reducer = childReducer.scope(state: \ParentState.child, action: ParentAction.child)
         var state = ParentState()
         _ = reducer.reduce(&state, ParentAction.ignored)
 
-        XCTAssertEqual(state.child.count, 0)
+        #expect(state.child.count == 0)
     }
 
-    func testGeneratedCasePathEmbedsAndExtracts() {
-        enum ChildAction: Equatable, Sendable {
-            case increment
-        }
+    @Test("generated CasePath embeds and extracts")
+    func generatedCasePathEmbedsAndExtracts() {
+        enum ChildAction: Equatable, Sendable { case increment }
 
         @CasePathable
         enum ParentAction: Equatable, Sendable {
@@ -89,8 +63,8 @@ final class ReducerScopingTests: XCTestCase {
             case ignored
         }
 
-        XCTAssertEqual(ParentAction.child.extract(.child(.increment)), .increment)
-        XCTAssertNil(ParentAction.child.extract(.ignored))
-        XCTAssertEqual(ParentAction.child.embed(.increment), .child(.increment))
+        #expect(ParentAction.child.extract(.child(.increment)) == .increment)
+        #expect(ParentAction.child.extract(.ignored) == nil)
+        #expect(ParentAction.child.embed(.increment) == .child(.increment))
     }
 }

@@ -2,6 +2,10 @@ import Foundation
 import StateKit
 
 enum SharedLoginDomain {
+    protocol State: Sendable {
+        var isAuthenticated: Bool { get set }
+    }
+
     @NonisolatedEquatable
     struct Projection: Sendable {
         var isAuthenticated: Bool

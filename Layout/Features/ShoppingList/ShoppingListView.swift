@@ -2,7 +2,7 @@ import StateKit
 import SwiftUI
 
 struct ShoppingListView: View {
-    @ObservedObject var store: Store<ShoppingListState, ShoppingListAction>
+    var store: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
         let shoppingListFlowStore = store.ifLet(
@@ -202,7 +202,7 @@ private struct ShoppingListProductRow: View {
 }
 
 struct ShoppingListFlowSheet: View {
-    @ObservedObject var store: Store<ShoppingListFlowState, ShoppingListFlowAction>
+    var store: Store<ShoppingListFlowState, ShoppingListFlowAction>
 
     var body: some View {
         NavigationStack {

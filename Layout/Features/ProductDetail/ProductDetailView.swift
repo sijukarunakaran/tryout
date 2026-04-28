@@ -2,7 +2,7 @@ import StateKit
 import SwiftUI
 
 struct ProductDetailView: View {
-    @ObservedObject var store: Store<ProductDetailState, ProductDetailAction>
+    var store: Store<ProductDetailState, ProductDetailAction>
 
     var body: some View {
         let shoppingListFlowStore = store.ifLet(
@@ -68,9 +68,7 @@ struct ProductDetailView: View {
                     .buttonStyle(.plain)
 
                     Button(action: {
-                        store.send(
-                            .addToListTapped(store.state.availableShoppingLists.isEmpty == false)
-                        )
+                        store.send(.addToListTapped)
                     }) {
                         HStack {
                             Text("Add to Shopping List")

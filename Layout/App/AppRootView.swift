@@ -2,7 +2,7 @@ import StateKit
 import SwiftUI
 
 struct AppRootView: View {
-    @StateObject private var store = Store<AppState, AppAction>(
+    @State private var store = Store<AppState, AppAction>(
         initialState: AppState(),
         reducer: AppDomain.reducer
     )

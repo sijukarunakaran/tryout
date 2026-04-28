@@ -14,20 +14,22 @@ import Foundation
 /// - `Action` must be `Sendable`
 /// - `Failure` must be `Error & Sendable`
 public struct Effect<Action: Sendable>: Sendable {
+    /// Runs the effect and returns all `Task`s it spawned.
+    /// Callers (e.g. `Store`) collect and cancel these tasks when appropriate.
     public let run: @Sendable (
         @escaping @Sendable (Action) -> Void
-    ) -> Void
+    ) -> [Task<Void, Never>]
 
     public let isEmpty: Bool
 
     public init(
-        run: @Sendable @escaping (@escaping @Sendable (Action) -> Void) -> Void
+        run: @Sendable @escaping (@escaping @Sendable (Action) -> Void) -> [Task<Void, Never>]
     ) {
         self.init(run: run, isEmpty: false)
     }
 
     fileprivate init(
-        run: @Sendable @escaping (@escaping @Sendable (Action) -> Void) -> Void,
+        run: @Sendable @escaping (@escaping @Sendable (Action) -> Void) -> [Task<Void, Never>],
         isEmpty: Bool
     ) {
         self.run = run
@@ -39,12 +41,10 @@ public struct Effect<Action: Sendable>: Sendable {
         _ block: @Sendable @escaping () async -> Action
     ) -> Effect {
         Effect { callback in
-            Task {
+            [Task {
                 let result = await block()
-                await MainActor.run {
-                    callback(result)
-                }
-            }
+                await MainActor.run { callback(result) }
+            }]
         }
     }
 
@@ -52,12 +52,10 @@ public struct Effect<Action: Sendable>: Sendable {
         _ block: @Sendable @escaping () async -> Action?
     ) -> Effect {
         Effect { callback in
-            Task {
+            [Task {
                 let result = await block()
-                await MainActor.run {
-                    result.flatMap(callback)
-                }
-            }
+                await MainActor.run { if let result { callback(result) } }
+            }]
         }
     }
 
@@ -65,9 +63,7 @@ public struct Effect<Action: Sendable>: Sendable {
         _ block: @Sendable @escaping () async -> Void
     ) -> Effect {
         Effect { _ in
-            Task {
-                await block()
-            }
+            [Task { await block() }]
         }
     }
 
@@ -75,26 +71,22 @@ public struct Effect<Action: Sendable>: Sendable {
         _ block: @Sendable @escaping () async -> [Action]
     ) -> Effect {
         Effect { callback in
-            Task {
+            [Task {
                 let results = await block()
-                await MainActor.run {
-                    results.forEach { callback($0) }
-                }
-            }
+                await MainActor.run { results.forEach { callback($0) } }
+            }]
         }
     }
 
     /// No effect.
-    public static var none: Effect { .init(run: { _ in }, isEmpty: true) }
+    public static var none: Effect { .init(run: { _ in [] }, isEmpty: true) }
 
     /// Map the output action.
     public func map<B: Sendable>(
         _ transform: @Sendable @escaping (Action) -> B
     ) -> Effect<B> {
         .init { callback in
-            self.run { result in
-                callback(transform(result))
-            }
+            self.run { result in callback(transform(result)) }
         }
     }
 
@@ -102,22 +94,14 @@ public struct Effect<Action: Sendable>: Sendable {
     public static func merge(
         _ effects: Effect...
     ) -> Effect {
-        .init { callback in
-            for eff in effects {
-                eff.run(callback)
-            }
-        }
+        .init { callback in effects.flatMap { $0.run(callback) } }
     }
 
     /// Merge multiple effects.
     public static func merge(
         _ effects: [Effect]
     ) -> Effect {
-        .init { callback in
-            for eff in effects {
-                eff.run(callback)
-            }
-        }
+        .init { callback in effects.flatMap { $0.run(callback) } }
     }
 }
 
@@ -139,8 +123,12 @@ private actor _EffectTasks {
         if cancelInFlight, let t = tasks[key] { t.cancel() }
         self.tasks[key] = Task {
             let result = await operation()
-            guard !Task.isCancelled, let action = result else { return }
+            guard !Task.isCancelled, let action = result else {
+                self.tasks.removeValue(forKey: key)
+                return
+            }
             await MainActor.run { callback(action) }
+            self.tasks.removeValue(forKey: key)
         }
     }
 
@@ -158,6 +146,7 @@ private actor _EffectTasks {
                 guard !Task.isCancelled else { return }
                 Task { @MainActor in callback(action) }
             }
+            self.tasks.removeValue(forKey: key)
         }
     }
 
@@ -174,20 +163,20 @@ extension Effect {
         _ block: @Sendable @escaping () async -> Action?
     ) -> Effect {
         Effect { callback in
-            Task {
+            [Task {
                 await _EffectTasks.shared.start(
                     id: id,
                     cancelInFlight: cancelInFlight,
                     operation: block,
                     callback: callback
                 )
-            }
+            }]
         }
     }
 
     public static func cancel(id: some Hashable & Sendable) -> Effect {
         Effect { _ in
-            Task { await _EffectTasks.shared.cancel(id: id) }
+            [Task { await _EffectTasks.shared.cancel(id: id) }]
         }
     }
 }
@@ -200,14 +189,14 @@ extension Effect {
         operation: @Sendable @escaping (_ send: @escaping @Sendable (Action) -> Void) async -> Void
     ) -> Effect {
         Effect { callback in
-            Task {
+            [Task {
                 await _EffectTasks.shared.startLongRun(
                     id: id,
                     cancelInFlight: cancelInFlight,
                     operation: operation,
                     callback: callback
                 )
-            }
+            }]
         }
     }
 }

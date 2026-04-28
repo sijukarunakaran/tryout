@@ -2,7 +2,7 @@ import StateKit
 import SwiftUI
 
 struct LoginView: View {
-    @ObservedObject var store: Store<LoginState, LoginAction>
+    var store: Store<LoginState, LoginAction>
     @FocusState private var focusedField: Field?
 
     private enum Field {

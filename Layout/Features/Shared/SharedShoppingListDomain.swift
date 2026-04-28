@@ -18,11 +18,11 @@ enum SharedShoppingListDomain {
     }
 
     struct ActionAdapter<Action: Sendable> {
-        var projectionUpdated: @Sendable (Action) -> Projection?
-        var addToListTapped: @Sendable (Action) -> (product: Product, hasExistingLists: Bool)?
+        var projectionUpdated: CasePath<Action, Projection>
+        var addToListTapped: CasePath<Action, Product>
         var productDetail: CasePath<Action, ProductDetailAction>
         var shoppingListFlow: CasePath<Action, ShoppingListFlowAction>
-        var delegate: @Sendable (Delegate) -> Action
+        var delegate: CasePath<Action, Delegate>
     }
 
     static func makeReducer<State: SharedShoppingListDomain.State, Action: Sendable>(
@@ -34,7 +34,7 @@ enum SharedShoppingListDomain {
                 action: adapter.shoppingListFlow
             ),
             Reducer<State, Action> { state, action in
-                if let projection = adapter.projectionUpdated(action) {
+                if let projection = adapter.projectionUpdated.extract(action) {
                     state.availableShoppingLists = projection.shoppingLists
 
                     if var detail = state.productDetail {
@@ -47,11 +47,11 @@ enum SharedShoppingListDomain {
                     return .none
                 }
 
-                if let addToList = adapter.addToListTapped(action) {
+                if let product = adapter.addToListTapped.extract(action) {
                     state.shoppingListFlow = ShoppingListFlowState(
                         id: UUID(),
-                        product: addToList.product,
-                        mode: addToList.hasExistingLists ? .picker : .create,
+                        product: product,
+                        mode: state.availableShoppingLists.isEmpty ? .create : .picker,
                         availableLists: state.availableShoppingLists
                     )
                     return .none
@@ -65,7 +65,7 @@ enum SharedShoppingListDomain {
                         }
                         state.productDetail?.shoppingListFlow = nil
                         return .task {
-                            adapter.delegate(.addProductToList(product, listID))
+                            adapter.delegate.embed(.addProductToList(product, listID))
                         }
 
                     case .shoppingListFlow(.createListConfirmed):
@@ -74,7 +74,7 @@ enum SharedShoppingListDomain {
                         }
                         state.productDetail?.shoppingListFlow = nil
                         return .task {
-                            adapter.delegate(.createList(name: flow.draftListName, product: flow.product))
+                            adapter.delegate.embed(.createList(name: flow.draftListName, product: flow.product))
                         }
 
                     case .dismissed, .addToCartTapped, .addToListTapped, .shoppingListFlow(.dismissed), .shoppingListFlow(.createNewListTapped), .shoppingListFlow(.draftListNameChanged):
@@ -90,7 +90,7 @@ enum SharedShoppingListDomain {
                         }
                         state.shoppingListFlow = nil
                         return .task {
-                            adapter.delegate(.addProductToList(product, listID))
+                            adapter.delegate.embed(.addProductToList(product, listID))
                         }
 
                     case .createListConfirmed:
@@ -99,7 +99,7 @@ enum SharedShoppingListDomain {
                         }
                         state.shoppingListFlow = nil
                         return .task {
-                            adapter.delegate(.createList(name: flow.draftListName, product: flow.product))
+                            adapter.delegate.embed(.createList(name: flow.draftListName, product: flow.product))
                         }
 
                     case .dismissed:
