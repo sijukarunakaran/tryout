@@ -2,7 +2,7 @@ import SwiftCompilerPlugin
 import SwiftSyntaxMacros
 
 @main
-struct LocalDIMacroPlugin: CompilerPlugin {
+struct SpliceMacroPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         DependencyClientMacro.self,
         DependencySourceMacro.self,

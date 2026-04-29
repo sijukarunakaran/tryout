@@ -5,15 +5,15 @@ import CompilerPluginSupport
 import PackageDescription
 
 let package = Package(
-    name: "LocalDI",
+    name: "Splice",
     platforms: [
         .iOS(.v13),
         .macOS(.v10_15)
     ],
     products: [
         .library(
-            name: "LocalDI",
-            targets: ["LocalDI"]
+            name: "Splice",
+            targets: ["Splice"]
         ),
     ],
     dependencies: [
@@ -21,11 +21,11 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "LocalDI",
-            dependencies: ["LocalDIMacros"]
+            name: "Splice",
+            dependencies: ["SpliceMacros"]
         ),
         .macro(
-            name: "LocalDIMacros",
+            name: "SpliceMacros",
             dependencies: [
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
                 .product(name: "SwiftDiagnostics", package: "swift-syntax"),
@@ -35,8 +35,8 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "LocalDITests",
-            dependencies: ["LocalDI"]
+            name: "SpliceTests",
+            dependencies: ["Splice"]
         ),
     ]
 )

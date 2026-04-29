@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import LocalDI
+@testable import Splice
 
 // MARK: - ClockClient
 
@@ -52,7 +52,7 @@ private actor ValueBox<T: Sendable> {
 
 // MARK: - Tests
 
-@Suite struct LocalDITests {
+@Suite struct SpliceTests {
     init() {}
 
     @Test func clockTestValueIsUsed() {
