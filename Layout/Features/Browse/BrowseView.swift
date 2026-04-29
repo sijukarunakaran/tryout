@@ -3,10 +3,9 @@ import SwiftUI
 
 struct BrowseView: View {
     var store: Store<BrowseState, BrowseAction>
-    @Binding var navigationPath: [AppDestination]
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
+        NavigationStack(path: store.binding(state: \.navigationPath, action: BrowseAction.setNavigationPath)) {
             List {
                 ForEach(ProductCategory.allCases, id: \.rawValue) { category in
                     let products = store.state.products.filter { $0.category == category }
@@ -19,7 +18,7 @@ struct BrowseView: View {
                                     product: product,
                                     quantityInCart: quantityInCart,
                                     openDetail: {
-                                        navigationPath.append(.productDetail(product))
+                                        store.send(.setNavigationPath(store.state.navigationPath + [.productDetail(product)]))
                                     },
                                     addToCart: {
                                         store.send(.addToCartTapped(product))

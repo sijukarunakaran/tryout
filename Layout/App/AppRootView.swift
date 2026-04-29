@@ -47,25 +47,13 @@ struct AppRootView: View {
                 action: { AppAction.navigation(.selectTab($0)) }
             )
         ) {
-            HomeView(
-                store: homeStore,
-                navigationPath: store.binding(
-                    state: \.navigation.homeStack,
-                    action: { AppAction.navigation(.setHomeStack($0)) }
-                )
-            )
+            HomeView(store: homeStore)
             .tabItem {
                 Label("Home", systemImage: "house.fill")
             }
             .tag(AppTab.home)
 
-            BrowseView(
-                store: browseStore,
-                navigationPath: store.binding(
-                    state: \.navigation.browseStack,
-                    action: { AppAction.navigation(.setBrowseStack($0)) }
-                )
-            )
+            BrowseView(store: browseStore)
             .tabItem {
                 Label("Browse", systemImage: "square.grid.2x2.fill")
             }

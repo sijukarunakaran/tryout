@@ -3,10 +3,9 @@ import SwiftUI
 
 struct HomeView: View {
     var store: Store<HomeState, HomeAction>
-    @Binding var navigationPath: [AppDestination]
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
+        NavigationStack(path: store.binding(state: \.navigationPath, action: HomeAction.setNavigationPath)) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     heroSection
@@ -19,7 +18,7 @@ struct HomeView: View {
                                 product: product,
                                 quantityInCart: quantityInCart,
                                 openDetail: {
-                                    navigationPath.append(.productDetail(product))
+                                    store.send(.setNavigationPath(store.state.navigationPath + [.productDetail(product)]))
                                 },
                                 addToCart: {
                                     store.send(.addToCartTapped(product))

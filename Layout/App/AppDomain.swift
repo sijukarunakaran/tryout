@@ -52,6 +52,16 @@ enum AppDomain {
         Reducer<State, Action> { state, action in
             switch action {
 
+            // MARK: - Navigation path bridging (feature → NavigationDomain)
+
+            case .home(.setNavigationPath(let path)):
+                state.navigation.homeStack = path
+                return .none
+
+            case .browse(.setNavigationPath(let path)):
+                state.navigation.browseStack = path
+                return .none
+
             // MARK: - Shopping list flow delegate (add to list from Home/Browse)
 
             case let .home(.shoppingListDelegate(.addToListRequested(product, lists))),
@@ -184,7 +194,14 @@ enum AppDomain {
                 )
                 return .task { shoppingListProjectionActions(for: projection) }
 
-            case .browse, .home, .login, .navigation:
+            case .browse, .home, .login:
+                return .none
+
+            case .navigation:
+                // Sync navigation stacks back to feature domains so views
+                // driven by their scoped stores stay in sync (e.g. deep links).
+                state.home.navigationPath = state.navigation.homeStack
+                state.browse.navigationPath = state.navigation.browseStack
                 return .none
             }
         }
