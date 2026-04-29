@@ -9,6 +9,7 @@ enum HomeDomain {
         var isAuthenticated = false
         var cartQuantities: [Product.ID: Int] = [:]
         var availableShoppingLists: [ShoppingList] = []
+        var navigationPath: [AppDestination] = []
     }
 
     @CasePathable
@@ -18,6 +19,7 @@ enum HomeDomain {
         case shoppingListProjectionUpdated(SharedShoppingListDomain.Projection)
         case addToCartTapped(Product)
         case addToListTapped(Product)
+        case setNavigationPath([AppDestination])
         case cartDelegate(SharedCartDomain.Delegate)
         case shoppingListDelegate(SharedShoppingListDomain.Delegate)
     }
@@ -42,10 +44,21 @@ enum HomeDomain {
         )
     }
 
+    static let featureReducer = Reducer<State, Action> { state, action in
+        switch action {
+        case .setNavigationPath(let path):
+            state.navigationPath = path
+            return .none
+        default:
+            return .none
+        }
+    }
+
     static let reducer: Reducer<State, Action> = .combine(
         SharedLoginDomain.makeReducer(adapter: loginAdapter),
         SharedCartDomain.makeReducer(adapter: cartAdapter),
-        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter)
+        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter),
+        featureReducer
     )
 }
 
