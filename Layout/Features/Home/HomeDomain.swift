@@ -48,7 +48,12 @@ enum HomeDomain {
         )
     }
 
-    static let featureReducer = Reducer<State, Action> { state, action in
+    static let featureReducer = Reducer<State, Action>.combine(
+        productDetailReducer.optional.scope(
+            state: \.productDetail,
+            action: Action.productDetail
+        ),
+        Reducer<State, Action> { state, action in
         switch action {
         case let .productTapped(product):
             state.productDetail = ProductDetailState(
@@ -64,6 +69,12 @@ enum HomeDomain {
 
         case .productDetail(.addToCartTapped(let product)):
             return .task { .addToCartTapped(product) }
+
+        case let .cartProjectionUpdated(projection):
+            if let id = state.productDetail?.product.id {
+                state.productDetail?.cartQuantity = projection.cartQuantities[id] ?? 0
+            }
+            return .none
 
         case let .shoppingListProjectionUpdated(projection):
             state.productDetail?.availableShoppingLists = projection.shoppingLists
@@ -87,7 +98,7 @@ enum HomeDomain {
         default:
             return .none
         }
-    }
+    })
 
     static let reducer: Reducer<State, Action> = .combine(
         SharedLoginDomain.makeReducer(adapter: loginAdapter),
