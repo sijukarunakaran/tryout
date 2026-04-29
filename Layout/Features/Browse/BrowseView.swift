@@ -3,18 +3,10 @@ import SwiftUI
 
 struct BrowseView: View {
     var store: Store<BrowseState, BrowseAction>
+    @Binding var navigationPath: [AppDestination]
 
     var body: some View {
-        let productDetailStore = store.ifLet(
-            state: \.productDetail,
-            action: BrowseAction.productDetail
-        )
-        let shoppingListFlowStore = store.ifLet(
-            state: \.shoppingListFlow,
-            action: BrowseAction.shoppingListFlow
-        )
-
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             List {
                 ForEach(ProductCategory.allCases, id: \.rawValue) { category in
                     let products = store.state.products.filter { $0.category == category }
@@ -27,7 +19,7 @@ struct BrowseView: View {
                                     product: product,
                                     quantityInCart: quantityInCart,
                                     openDetail: {
-                                        store.send(.productTapped(product))
+                                        navigationPath.append(.productDetail(product))
                                     },
                                     addToCart: {
                                         store.send(.addToCartTapped(product))
@@ -45,21 +37,14 @@ struct BrowseView: View {
             .scrollContentBackground(.hidden)
             .background(Color(red: 0.94, green: 0.95, blue: 0.92))
             .navigationTitle("Browse")
-            .sheet(
-                item: store.binding(state: \.productDetail, action: .productDetail(.dismissed))
-            ) { _ in
-                if let productDetailStore {
+            .navigationDestination(for: AppDestination.self) { destination in
+                switch destination {
+                case .productDetail(let product):
                     ProductDetailView(
-                        store: productDetailStore
-                    )
-                }
-            }
-            .sheet(
-                item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
-            ) { _ in
-                if let shoppingListFlowStore {
-                    ShoppingListFlowSheet(
-                        store: shoppingListFlowStore
+                        product: product,
+                        cartQuantity: store.state.cartQuantities[product.id] ?? 0,
+                        onAddToCart: { store.send(.addToCartTapped(product)) },
+                        onAddToList: { store.send(.addToListTapped(product)) }
                     )
                 }
             }

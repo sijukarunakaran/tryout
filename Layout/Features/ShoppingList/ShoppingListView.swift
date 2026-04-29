@@ -5,11 +5,6 @@ struct ShoppingListView: View {
     var store: Store<ShoppingListState, ShoppingListAction>
 
     var body: some View {
-        let shoppingListFlowStore = store.ifLet(
-            state: \.shoppingListFlow,
-            action: ShoppingListAction.shoppingListFlow
-        )
-
         NavigationStack {
             content
                 .navigationTitle("Shopping Lists")
@@ -18,15 +13,6 @@ struct ShoppingListView: View {
                         Button("New List") {
                             store.send(.createListButtonTapped)
                         }
-                    }
-                }
-                .sheet(
-                    item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
-                ) { _ in
-                    if let shoppingListFlowStore {
-                        ShoppingListFlowSheet(
-                            store: shoppingListFlowStore
-                        )
                     }
                 }
         }

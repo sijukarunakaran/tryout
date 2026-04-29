@@ -3,18 +3,10 @@ import SwiftUI
 
 struct HomeView: View {
     var store: Store<HomeState, HomeAction>
+    @Binding var navigationPath: [AppDestination]
 
     var body: some View {
-        let productDetailStore = store.ifLet(
-            state: \.productDetail,
-            action: HomeAction.productDetail
-        )
-        let shoppingListFlowStore = store.ifLet(
-            state: \.shoppingListFlow,
-            action: HomeAction.shoppingListFlow
-        )
-
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     heroSection
@@ -27,7 +19,7 @@ struct HomeView: View {
                                 product: product,
                                 quantityInCart: quantityInCart,
                                 openDetail: {
-                                    store.send(.productTapped(product))
+                                    navigationPath.append(.productDetail(product))
                                 },
                                 addToCart: {
                                     store.send(.addToCartTapped(product))
@@ -43,21 +35,14 @@ struct HomeView: View {
             }
             .background(Color(red: 0.96, green: 0.95, blue: 0.90))
             .navigationTitle("Home")
-            .sheet(
-                item: store.binding(state: \.productDetail, action: .productDetail(.dismissed))
-            ) { _ in
-                if let productDetailStore {
+            .navigationDestination(for: AppDestination.self) { destination in
+                switch destination {
+                case .productDetail(let product):
                     ProductDetailView(
-                        store: productDetailStore
-                    )
-                }
-            }
-            .sheet(
-                item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
-            ) { _ in
-                if let shoppingListFlowStore {
-                    ShoppingListFlowSheet(
-                        store: shoppingListFlowStore
+                        product: product,
+                        cartQuantity: store.state.cartQuantities[product.id] ?? 0,
+                        onAddToCart: { store.send(.addToCartTapped(product)) },
+                        onAddToList: { store.send(.addToListTapped(product)) }
                     )
                 }
             }

@@ -9,8 +9,12 @@ struct AppRootView: View {
 
     var body: some View {
         let loginStore = store.ifLet(
-            state: \.login,
+            state: \.navigation.login,
             action: AppAction.login
+        )
+        let shoppingListFlowStore = store.ifLet(
+            state: \.navigation.shoppingListFlow,
+            action: { AppAction.navigation(.shoppingListFlow($0)) }
         )
         let homeStore = store.scope(
             state: { @Sendable appState in
@@ -36,29 +40,37 @@ struct AppRootView: View {
             },
             action: AppAction.shoppingList
         )
-        
+
         TabView(
             selection: store.binding(
-                state: \.selectedTab,
-                action: AppAction.selectedTabChanged
+                state: \.navigation.selectedTab,
+                action: { AppAction.navigation(.selectTab($0)) }
             )
         ) {
             HomeView(
-                store: homeStore
+                store: homeStore,
+                navigationPath: store.binding(
+                    state: \.navigation.homeStack,
+                    action: { AppAction.navigation(.setHomeStack($0)) }
+                )
             )
             .tabItem {
                 Label("Home", systemImage: "house.fill")
             }
             .tag(AppTab.home)
-            
+
             BrowseView(
-                store: browseStore
+                store: browseStore,
+                navigationPath: store.binding(
+                    state: \.navigation.browseStack,
+                    action: { AppAction.navigation(.setBrowseStack($0)) }
+                )
             )
             .tabItem {
                 Label("Browse", systemImage: "square.grid.2x2.fill")
             }
             .tag(AppTab.browse)
-            
+
             CartView(
                 store: cartStore
             )
@@ -77,11 +89,24 @@ struct AppRootView: View {
             .tag(AppTab.shoppingLists)
         }
         .tint(Color(red: 0.13, green: 0.39, blue: 0.28))
+        .onOpenURL { url in
+            store.send(.navigation(.openURL(url)))
+        }
         .sheet(
-            item: store.binding(state: \.login, action: .login(.cancelTapped))
+            item: store.binding(state: \.navigation.login, action: .login(.cancelTapped))
         ) { _ in
             if let loginStore {
                 LoginView(store: loginStore)
+            }
+        }
+        .sheet(
+            item: store.binding(
+                state: \.navigation.shoppingListFlow,
+                action: AppAction.navigation(.dismissShoppingListFlow)
+            )
+        ) { _ in
+            if let shoppingListFlowStore {
+                ShoppingListFlowSheet(store: shoppingListFlowStore)
             }
         }
     }

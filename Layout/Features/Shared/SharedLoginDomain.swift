@@ -17,6 +17,7 @@ enum SharedLoginDomain {
         case addProductToList(Product, ShoppingList.ID)
         case createList(name: String, product: Product?)
         case startCreateList
+        case addToList(Product)
     }
 
     struct ActionAdapter<Action: Sendable> {

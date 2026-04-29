@@ -1,7 +1,7 @@
 import Foundation
 import os
 import Testing
-import LocalDI
+import Splice
 @testable import Layout
 
 private struct FileManagerRecorder: Sendable {
