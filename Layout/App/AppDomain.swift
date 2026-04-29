@@ -52,26 +52,27 @@ enum AppDomain {
                 state.selectedTab = tab
                 return .none
 
-            case let .home(.loginRequired(protectedAction)),
-                let .browse(.loginRequired(protectedAction)),
-                let .shoppingList(.loginRequired(protectedAction)):
-                guard state.isAuthenticated == false else {
-                    return .task {
-                        protectedActionAction(for: protectedAction)
+            case .shoppingList(.delegate(.createListTapped)):
+                guard state.isAuthenticated else {
+                    state.pendingProtectedAction = .startCreateList
+                    if state.login == nil {
+                        state.login = LoginState(id: UUID())
                     }
+                    return .none
                 }
-                state.pendingProtectedAction = protectedAction
-                if state.login == nil {
-                    state.login = LoginState(id: UUID())
-                }
-                return .none
+                return .task { .shoppingList(.openShoppingListFlow) }
 
-            case let .home(.cartDelegate(delegate)),
-                let .browse(.cartDelegate(delegate)),
-                let .shoppingList(.cartDelegate(delegate)):
-                return .task {
-                    cartAction(for: delegate)
+            case let .home(.cartDelegate(.addToCart(product))),
+                let .browse(.cartDelegate(.addToCart(product))),
+                let .shoppingList(.cartDelegate(.addToCart(product))):
+                guard state.isAuthenticated else {
+                    state.pendingProtectedAction = .addToCart(product)
+                    if state.login == nil {
+                        state.login = LoginState(id: UUID())
+                    }
+                    return .none
                 }
+                return .task { .cart(.add(product)) }
 
             case let .home(.shoppingListDelegate(delegate)),
                 let .browse(.shoppingListDelegate(delegate)):
@@ -94,7 +95,7 @@ enum AppDomain {
                 if let protectedAction = state.pendingProtectedAction {
                     state.pendingProtectedAction = nil
                     return .task {
-                        authActions + [protectedActionAction(for: protectedAction)]
+                        authActions + [mapAction(for: protectedAction)]
                     }
                 }
                 return .task {
@@ -113,9 +114,6 @@ enum AppDomain {
                 }
 
             case .shoppingList:
-                guard shouldSyncShoppingListProjection(after: action) else {
-                    return .none
-                }
                 let projection = SharedShoppingListDomain.makeProjection(
                     shoppingLists: state.shoppingList.lists
                 )
@@ -128,15 +126,6 @@ enum AppDomain {
             }
         }
     )
-
-    nonisolated static func cartAction(
-        for delegate: SharedCartDomain.Delegate
-    ) -> Action {
-        switch delegate {
-        case let .addToCart(product):
-            .cart(.add(product))
-        }
-    }
 
     nonisolated static func shoppingListAction(
         for delegate: SharedShoppingListDomain.Delegate
@@ -162,7 +151,7 @@ enum AppDomain {
         }
     }
 
-    nonisolated static func protectedActionAction(
+    nonisolated static func mapAction(
         for protectedAction: SharedLoginDomain.ProtectedAction
     ) -> Action {
         switch protectedAction {
@@ -176,7 +165,7 @@ enum AppDomain {
             .shoppingList(.createList(name: name, product: product))
 
         case .startCreateList:
-            .shoppingList(.createListButtonTapped)
+            .shoppingList(.openShoppingListFlow)
         }
     }
 
@@ -210,20 +199,6 @@ enum AppDomain {
         ]
     }
 
-    nonisolated static func shouldSyncShoppingListProjection(
-        after action: Action
-    ) -> Bool {
-        switch action {
-        case .shoppingList(.cartProjectionUpdated), .shoppingList(.cartDelegate):
-            false
-
-        case .shoppingList:
-            true
-
-        case .selectedTabChanged, .browse, .home, .cart, .login:
-            false
-        }
-    }
 }
 
 typealias AppState = AppDomain.State

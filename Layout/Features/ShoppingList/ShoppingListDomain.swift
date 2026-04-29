@@ -51,11 +51,15 @@ let shoppingListFlowReducer = ShoppingListFlowDomain.reducer
 @Feature
 enum ShoppingListDomain {
     @NonisolatedEquatable
-    struct State: Sendable {
+    struct State: SharedLoginDomain.State, SharedCartDomain.State, Sendable {
         var isAuthenticated = false
         var lists: [ShoppingList] = []
         var cartQuantities: [Product.ID: Int] = [:]
         var shoppingListFlow: ShoppingListFlowState?
+    }
+
+    enum Delegate: Sendable {
+        case createListTapped
     }
 
     @CasePathable
@@ -63,35 +67,38 @@ enum ShoppingListDomain {
         case authProjectionUpdated(SharedLoginDomain.Projection)
         case cartProjectionUpdated(SharedCartDomain.Projection)
         case createListButtonTapped
+        case openShoppingListFlow
         case createList(name: String, product: Product?)
         case addProductToList(Product, ShoppingList.ID)
         case addToCartTapped(Product)
         case shoppingListFlow(ShoppingListFlowAction)
-        case loginRequired(SharedLoginDomain.ProtectedAction)
         case cartDelegate(SharedCartDomain.Delegate)
+        case delegate(Delegate)
     }
 
-    static let reducer = Reducer<State, Action>.combine(
+    static var loginAdapter: SharedLoginDomain.ActionAdapter<Action> {
+        SharedLoginDomain.ActionAdapter(projectionUpdated: Action.authProjectionUpdated)
+    }
+
+    static var cartAdapter: SharedCartDomain.ActionAdapter<Action> {
+        SharedCartDomain.ActionAdapter(
+            projectionUpdated: Action.cartProjectionUpdated,
+            addToCartTapped: Action.addToCartTapped,
+            delegate: Action.cartDelegate
+        )
+    }
+
+    static let featureReducer = Reducer<State, Action>.combine(
         shoppingListFlowReducer.optional.scope(
             state: \.shoppingListFlow,
             action: Action.shoppingListFlow
         ),
         Reducer<State, Action> { state, action in
             switch action {
-            case let .authProjectionUpdated(projection):
-                state.isAuthenticated = projection.isAuthenticated
-                return .none
-
-            case let .cartProjectionUpdated(projection):
-                state.cartQuantities = projection.cartQuantities
-                return .none
-
             case .createListButtonTapped:
-                guard state.isAuthenticated else {
-                    return .task {
-                        .loginRequired(.startCreateList)
-                    }
-                }
+                return .task { .delegate(.createListTapped) }
+
+            case .openShoppingListFlow:
                 state.shoppingListFlow = ShoppingListFlowState(
                     id: UUID(),
                     product: nil,
@@ -102,10 +109,7 @@ enum ShoppingListDomain {
 
             case let .createList(name, product):
                 let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard trimmedName.isEmpty == false else {
-                    return .none
-                }
-
+                guard trimmedName.isEmpty == false else { return .none }
                 state.lists.append(
                     ShoppingList(
                         id: UUID(),
@@ -120,7 +124,6 @@ enum ShoppingListDomain {
                 guard let index = state.lists.firstIndex(where: { $0.id == listID }) else {
                     return .none
                 }
-
                 if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
                     state.lists[index].products.append(product)
                 }
@@ -130,10 +133,7 @@ enum ShoppingListDomain {
                 guard
                     let product = state.shoppingListFlow?.product,
                     let index = state.lists.firstIndex(where: { $0.id == listID })
-                else {
-                    return .none
-                }
-
+                else { return .none }
                 if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
                     state.lists[index].products.append(product)
                 }
@@ -141,15 +141,9 @@ enum ShoppingListDomain {
                 return .none
 
             case .shoppingListFlow(.createListConfirmed):
-                guard let flow = state.shoppingListFlow else {
-                    return .none
-                }
-
+                guard let flow = state.shoppingListFlow else { return .none }
                 let trimmedName = flow.draftListName.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard trimmedName.isEmpty == false else {
-                    return .none
-                }
-
+                guard trimmedName.isEmpty == false else { return .none }
                 state.lists.append(
                     ShoppingList(
                         id: UUID(),
@@ -164,20 +158,17 @@ enum ShoppingListDomain {
                 state.shoppingListFlow = nil
                 return .none
 
-            case let .addToCartTapped(product):
-                guard state.isAuthenticated else {
-                    return .task {
-                        .loginRequired(.addToCart(product))
-                    }
-                }
-                return .task {
-                    .cartDelegate(.addToCart(product))
-                }
-
-            case .shoppingListFlow, .loginRequired, .cartDelegate:
+            case .authProjectionUpdated, .cartProjectionUpdated, .addToCartTapped,
+                 .cartDelegate, .delegate, .shoppingListFlow:
                 return .none
             }
         }
+    )
+
+    static let reducer: Reducer<State, Action> = .combine(
+        SharedLoginDomain.makeReducer(adapter: loginAdapter),
+        SharedCartDomain.makeReducer(adapter: cartAdapter),
+        featureReducer
     )
 }
 

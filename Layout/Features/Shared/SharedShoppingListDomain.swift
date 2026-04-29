@@ -13,14 +13,12 @@ enum SharedShoppingListDomain {
 
     protocol State: Sendable {
         var availableShoppingLists: [ShoppingList] { get set }
-        var productDetail: ProductDetailState? { get set }
         var shoppingListFlow: ShoppingListFlowState? { get set }
     }
 
     struct ActionAdapter<Action: Sendable> {
         var projectionUpdated: CasePath<Action, Projection>
         var addToListTapped: CasePath<Action, Product>
-        var productDetail: CasePath<Action, ProductDetailAction>
         var shoppingListFlow: CasePath<Action, ShoppingListFlowAction>
         var delegate: CasePath<Action, Delegate>
     }
@@ -36,13 +34,6 @@ enum SharedShoppingListDomain {
             Reducer<State, Action> { state, action in
                 if let projection = adapter.projectionUpdated.extract(action) {
                     state.availableShoppingLists = projection.shoppingLists
-
-                    if var detail = state.productDetail {
-                        detail.availableShoppingLists = projection.shoppingLists
-                        detail.shoppingListFlow?.availableLists = projection.shoppingLists
-                        state.productDetail = detail
-                    }
-
                     state.shoppingListFlow?.availableLists = projection.shoppingLists
                     return .none
                 }
@@ -55,31 +46,6 @@ enum SharedShoppingListDomain {
                         availableLists: state.availableShoppingLists
                     )
                     return .none
-                }
-
-                if let detailAction = adapter.productDetail.extract(action) {
-                    switch detailAction {
-                    case let .shoppingListFlow(.listSelected(listID)):
-                        guard let product = state.productDetail?.shoppingListFlow?.product else {
-                            return .none
-                        }
-                        state.productDetail?.shoppingListFlow = nil
-                        return .task {
-                            adapter.delegate.embed(.addProductToList(product, listID))
-                        }
-
-                    case .shoppingListFlow(.createListConfirmed):
-                        guard let flow = state.productDetail?.shoppingListFlow else {
-                            return .none
-                        }
-                        state.productDetail?.shoppingListFlow = nil
-                        return .task {
-                            adapter.delegate.embed(.createList(name: flow.draftListName, product: flow.product))
-                        }
-
-                    case .dismissed, .addToCartTapped, .addToListTapped, .shoppingListFlow(.dismissed), .shoppingListFlow(.createNewListTapped), .shoppingListFlow(.draftListNameChanged):
-                        return .none
-                    }
                 }
 
                 if let flowAction = adapter.shoppingListFlow.extract(action) {
