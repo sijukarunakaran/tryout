@@ -26,8 +26,8 @@ struct LoginView: View {
                     TextField(
                         "Email",
                         text: store.binding(
-                            get: \.email,
-                            send: LoginAction.emailChanged
+                            state: \.email,
+                            action: LoginAction.emailChanged
                         )
                     )
                     .textInputAutocapitalization(.never)
@@ -40,8 +40,8 @@ struct LoginView: View {
                     SecureField(
                         "Password",
                         text: store.binding(
-                            get: \.password,
-                            send: LoginAction.passwordChanged
+                            state: \.password,
+                            action: LoginAction.passwordChanged
                         )
                     )
                     .focused($focusedField, equals: .password)

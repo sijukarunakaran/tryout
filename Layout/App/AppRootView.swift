@@ -39,8 +39,8 @@ struct AppRootView: View {
         
         TabView(
             selection: store.binding(
-                get: \.selectedTab,
-                send: AppAction.selectedTabChanged
+                state: \.selectedTab,
+                action: AppAction.selectedTabChanged
             )
         ) {
             HomeView(
@@ -78,13 +78,7 @@ struct AppRootView: View {
         }
         .tint(Color(red: 0.13, green: 0.39, blue: 0.28))
         .sheet(
-            item: Binding(
-                get: { store.state.login },
-                set: { newValue in
-                    guard newValue == nil else { return }
-                    store.send(.login(.cancelTapped))
-                }
-            )
+            item: store.binding(state: \.login, action: .login(.cancelTapped))
         ) { _ in
             if let loginStore {
                 LoginView(store: loginStore)

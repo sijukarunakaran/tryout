@@ -92,15 +92,29 @@ public final class Store<State: Sendable & Equatable, Action: Sendable> {
 }
 
 extension Store {
-    /// Create a SwiftUI Binding from a store's state and an action-generator.
+    /// Binding for a value field. The `action` closure is the embed direction of a CasePath:
+    /// pass a case constructor directly (`Action.textChanged`) or `casePath.embed`.
     public func binding<Value>(
-        get toLocal: @escaping (State) -> Value,
-        send toAction: @escaping (Value) -> Action
+        state keyPath: KeyPath<State, Value>,
+        action: @escaping (Value) -> Action
     ) -> Binding<Value> {
         Binding<Value>(
-            get: { toLocal(self.state) },
+            get: { self.state[keyPath: keyPath] },
+            set: { self.send(action($0)) }
+        )
+    }
+
+    /// Binding for optional state used by sheet/fullScreenCover presentation.
+    /// Writing `nil` sends the dismiss action; any other write is ignored.
+    public func binding<Value>(
+        state keyPath: KeyPath<State, Value?>,
+        action dismissAction: Action
+    ) -> Binding<Value?> {
+        Binding<Value?>(
+            get: { self.state[keyPath: keyPath] },
             set: { newValue in
-                self.send(toAction(newValue))
+                guard newValue == nil else { return }
+                self.send(dismissAction)
             }
         )
     }

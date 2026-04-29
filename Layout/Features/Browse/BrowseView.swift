@@ -46,13 +46,7 @@ struct BrowseView: View {
             .background(Color(red: 0.94, green: 0.95, blue: 0.92))
             .navigationTitle("Browse")
             .sheet(
-                item: Binding(
-                    get: { store.state.productDetail },
-                    set: { newValue in
-                        guard newValue == nil else { return }
-                        store.send(.productDetail(.dismissed))
-                    }
-                )
+                item: store.binding(state: \.productDetail, action: .productDetail(.dismissed))
             ) { _ in
                 if let productDetailStore {
                     ProductDetailView(
@@ -61,13 +55,7 @@ struct BrowseView: View {
                 }
             }
             .sheet(
-                item: Binding(
-                    get: { store.state.shoppingListFlow },
-                    set: { newValue in
-                        guard newValue == nil else { return }
-                        store.send(.shoppingListFlow(.dismissed))
-                    }
-                )
+                item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
             ) { _ in
                 if let shoppingListFlowStore {
                     ShoppingListFlowSheet(

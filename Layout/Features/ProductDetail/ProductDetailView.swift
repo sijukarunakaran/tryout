@@ -89,13 +89,7 @@ struct ProductDetailView: View {
             .background(Color(red: 0.97, green: 0.96, blue: 0.93))
             .navigationTitle("Product")
             .sheet(
-                item: Binding(
-                    get: { store.state.shoppingListFlow },
-                    set: { newValue in
-                        guard newValue == nil else { return }
-                        store.send(.shoppingListFlow(.dismissed))
-                    }
-                )
+                item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
             ) { _ in
                 if let shoppingListFlowStore {
                     ShoppingListFlowSheet(

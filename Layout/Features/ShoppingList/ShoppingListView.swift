@@ -21,13 +21,7 @@ struct ShoppingListView: View {
                     }
                 }
                 .sheet(
-                    item: Binding(
-                        get: { store.state.shoppingListFlow },
-                        set: { newValue in
-                            guard newValue == nil else { return }
-                            store.send(.shoppingListFlow(.dismissed))
-                        }
-                    )
+                    item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
                 ) { _ in
                     if let shoppingListFlowStore {
                         ShoppingListFlowSheet(
@@ -300,8 +294,8 @@ struct ShoppingListFlowSheet: View {
                 TextField(
                     "Weekly staples",
                     text: store.binding(
-                        get: \.draftListName,
-                        send: ShoppingListFlowAction.draftListNameChanged
+                        state: \.draftListName,
+                        action: ShoppingListFlowAction.draftListNameChanged
                     )
                 )
 
