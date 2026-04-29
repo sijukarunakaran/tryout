@@ -3,9 +3,10 @@ import SwiftUI
 
 struct HomeView: View {
     var store: Store<HomeState, HomeAction>
+    @Binding var navigationPath: [AppDestination]
 
     var body: some View {
-        NavigationStack(path: store.binding(state: \.navigationPath, action: HomeAction.setNavigationPath)) {
+        NavigationStack(path: $navigationPath) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     heroSection
@@ -18,7 +19,7 @@ struct HomeView: View {
                                 product: product,
                                 quantityInCart: quantityInCart,
                                 openDetail: {
-                                    store.send(.setNavigationPath(store.state.navigationPath + [.productDetail(product)]))
+                                    navigationPath.append(.productDetail(product))
                                 },
                                 addToCart: {
                                     store.send(.addToCartTapped(product))
@@ -43,7 +44,6 @@ struct HomeView: View {
                         onAddToCart: { store.send(.addToCartTapped(product)) },
                         onAddToList: { store.send(.addToListTapped(product)) }
                     )
-                    .toolbar(.hidden, for: .tabBar)
                 }
             }
         }

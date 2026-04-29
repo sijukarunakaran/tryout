@@ -3,9 +3,10 @@ import SwiftUI
 
 struct BrowseView: View {
     var store: Store<BrowseState, BrowseAction>
+    @Binding var navigationPath: [AppDestination]
 
     var body: some View {
-        NavigationStack(path: store.binding(state: \.navigationPath, action: BrowseAction.setNavigationPath)) {
+        NavigationStack(path: $navigationPath) {
             List {
                 ForEach(ProductCategory.allCases, id: \.rawValue) { category in
                     let products = store.state.products.filter { $0.category == category }
@@ -18,7 +19,7 @@ struct BrowseView: View {
                                     product: product,
                                     quantityInCart: quantityInCart,
                                     openDetail: {
-                                        store.send(.setNavigationPath(store.state.navigationPath + [.productDetail(product)]))
+                                        navigationPath.append(.productDetail(product))
                                     },
                                     addToCart: {
                                         store.send(.addToCartTapped(product))
@@ -45,7 +46,6 @@ struct BrowseView: View {
                         onAddToCart: { store.send(.addToCartTapped(product)) },
                         onAddToList: { store.send(.addToListTapped(product)) }
                     )
-                    .toolbar(.hidden, for: .tabBar)
                 }
             }
         }
