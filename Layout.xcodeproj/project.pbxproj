@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0E05A60A2FA1B68C00DF280E /* Splice in Frameworks */ = {isa = PBXBuildFile; productRef = 0E05A6092FA1B68C00DF280E /* Splice */; };
 		0E5E84D92F6F05CA003A2981 /* LocalDI in Frameworks */ = {isa = PBXBuildFile; productRef = 0E5E84D82F6F05CA003A2981 /* LocalDI */; };
 		0E5E84DC2F6F05CA003A2981 /* StateKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0E5E84DB2F6F05CA003A2981 /* StateKit */; };
 /* End PBXBuildFile section */
@@ -46,6 +47,7 @@
 			files = (
 				0E5E84D92F6F05CA003A2981 /* LocalDI in Frameworks */,
 				0E5E84DC2F6F05CA003A2981 /* StateKit in Frameworks */,
+				0E05A60A2FA1B68C00DF280E /* Splice in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -99,6 +101,7 @@
 			packageProductDependencies = (
 				0E5E84D82F6F05CA003A2981 /* LocalDI */,
 				0E5E84DB2F6F05CA003A2981 /* StateKit */,
+				0E05A6092FA1B68C00DF280E /* Splice */,
 			);
 			productName = Layout;
 			productReference = 0E7E27F62F66B54B005581DF /* Layout.app */;
@@ -156,8 +159,8 @@
 			mainGroup = 0E7E27ED2F66B54B005581DF;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				0E5E84D72F6F05CA003A2981 /* XCLocalSwiftPackageReference "LocalDI" */,
 				0E5E84DD2F6F05CA003A2981 /* XCLocalSwiftPackageReference "StateKit" */,
+				0E05A6082FA1B68C00DF280E /* XCLocalSwiftPackageReference "Splice" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0E7E27F72F66B54B005581DF /* Products */;
@@ -507,9 +510,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		0E5E84D72F6F05CA003A2981 /* XCLocalSwiftPackageReference "LocalDI" */ = {
+		0E05A6082FA1B68C00DF280E /* XCLocalSwiftPackageReference "Splice" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = LocalDI;
+			relativePath = Splice;
 		};
 		0E5E84DD2F6F05CA003A2981 /* XCLocalSwiftPackageReference "StateKit" */ = {
 			isa = XCLocalSwiftPackageReference;
@@ -518,6 +521,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		0E05A6092FA1B68C00DF280E /* Splice */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Splice;
+		};
 		0E5E84D82F6F05CA003A2981 /* LocalDI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LocalDI;
