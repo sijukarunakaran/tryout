@@ -1,5 +1,5 @@
 import Foundation
-import LocalDI
+import Splice
 import StateKit
 
 @Feature

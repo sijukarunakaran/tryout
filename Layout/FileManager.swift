@@ -1,5 +1,5 @@
 import Foundation
-import LocalDI
+import Splice
 
 @DependencyClient
 struct FileManagerClient: Sendable {

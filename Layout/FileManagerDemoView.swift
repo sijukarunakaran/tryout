@@ -1,5 +1,5 @@
 import SwiftUI
-import LocalDI
+import Splice
 
 struct FileManagerDemoView: View {
     @State private var text = "Hello, file system!"

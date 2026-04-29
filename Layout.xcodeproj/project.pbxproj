@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		0E05A60A2FA1B68C00DF280E /* Splice in Frameworks */ = {isa = PBXBuildFile; productRef = 0E05A6092FA1B68C00DF280E /* Splice */; };
-		0E5E84D92F6F05CA003A2981 /* LocalDI in Frameworks */ = {isa = PBXBuildFile; productRef = 0E5E84D82F6F05CA003A2981 /* LocalDI */; };
 		0E5E84DC2F6F05CA003A2981 /* StateKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0E5E84DB2F6F05CA003A2981 /* StateKit */; };
 /* End PBXBuildFile section */
 
@@ -45,7 +44,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0E5E84D92F6F05CA003A2981 /* LocalDI in Frameworks */,
 				0E5E84DC2F6F05CA003A2981 /* StateKit in Frameworks */,
 				0E05A60A2FA1B68C00DF280E /* Splice in Frameworks */,
 			);
@@ -99,7 +97,6 @@
 			);
 			name = Layout;
 			packageProductDependencies = (
-				0E5E84D82F6F05CA003A2981 /* LocalDI */,
 				0E5E84DB2F6F05CA003A2981 /* StateKit */,
 				0E05A6092FA1B68C00DF280E /* Splice */,
 			);
@@ -524,10 +521,6 @@
 		0E05A6092FA1B68C00DF280E /* Splice */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Splice;
-		};
-		0E5E84D82F6F05CA003A2981 /* LocalDI */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = LocalDI;
 		};
 		0E5E84DB2F6F05CA003A2981 /* StateKit */ = {
 			isa = XCSwiftPackageProductDependency;
