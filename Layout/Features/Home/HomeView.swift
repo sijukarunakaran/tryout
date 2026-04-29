@@ -43,6 +43,7 @@ struct HomeView: View {
                         onAddToCart: { store.send(.addToCartTapped(product)) },
                         onAddToList: { store.send(.addToListTapped(product)) }
                     )
+                    .toolbar(.hidden, for: .tabBar)
                 }
             }
         }
