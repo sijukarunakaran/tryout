@@ -18,6 +18,7 @@ enum ShoppingListFlowDomain {
         var availableLists: [ShoppingList] = []
     }
 
+    @CasePathable
     enum Action: Sendable {
         case createNewListTapped
         case draftListNameChanged(String)
@@ -26,21 +27,17 @@ enum ShoppingListFlowDomain {
         case dismissed
     }
 
-    static let reducer = Reducer<State, Action> { state, action in
-        switch action {
-        case .createNewListTapped:
+    static let reducer = Reducer<State, Action>.combine(
+        .on(matching: { if case .createNewListTapped = $0 { return true }; return false }) { state in
             state.mode = .create
             state.draftListName = ""
             return .none
-
-        case let .draftListNameChanged(name):
+        },
+        .on(Action.draftListNameChanged) { state, name in
             state.draftListName = name
             return .none
-
-        case .listSelected, .createListConfirmed, .dismissed:
-            return .none
         }
-    }
+    )
 }
 
 typealias ShoppingListFlowState = ShoppingListFlowDomain.State
@@ -85,12 +82,14 @@ enum ShoppingListDomain {
         )
     }
 
-    static let featureReducer = Reducer<State, Action> { state, action in
-        switch action {
-        case .createListButtonTapped:
-            return .task { .delegate(.createListTapped) }
-
-        case let .createList(name, product):
+    static let featureReducer = Reducer<State, Action>.combine(
+        .on(matching: { if case .createListButtonTapped = $0 { return true }; return false }) { _ in
+            .task { .delegate(.createListTapped) }
+        },
+        .on(
+            extract: { if case let .createList(name, product) = $0 { return (name, product) }; return nil }
+        ) { state, args in
+            let (name, product) = args
             let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmedName.isEmpty == false else { return .none }
             state.lists.append(
@@ -101,8 +100,11 @@ enum ShoppingListDomain {
                 )
             )
             return .none
-
-        case let .addProductToList(product, listID):
+        },
+        .on(
+            extract: { if case let .addProductToList(product, listID) = $0 { return (product, listID) }; return nil }
+        ) { state, args in
+            let (product, listID) = args
             guard let index = state.lists.firstIndex(where: { $0.id == listID }) else {
                 return .none
             }
@@ -110,12 +112,8 @@ enum ShoppingListDomain {
                 state.lists[index].products.append(product)
             }
             return .none
-
-        case .authProjectionUpdated, .cartProjectionUpdated, .addToCartTapped,
-             .cartDelegate, .delegate:
-            return .none
         }
-    }
+    )
 
     static let reducer: Reducer<State, Action> = .combine(
         SharedLoginDomain.makeReducer(adapter: loginAdapter),

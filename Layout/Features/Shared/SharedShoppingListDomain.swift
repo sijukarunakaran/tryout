@@ -25,21 +25,18 @@ enum SharedShoppingListDomain {
     static func makeReducer<State: SharedShoppingListDomain.State, Action: Sendable>(
         adapter: ActionAdapter<Action>
     ) -> Reducer<State, Action> {
-        Reducer<State, Action> { state, action in
-            if let projection = adapter.projectionUpdated.extract(action) {
+        .combine(
+            .on(adapter.projectionUpdated) { state, projection in
                 state.availableShoppingLists = projection.shoppingLists
                 return .none
-            }
-
-            if let product = adapter.addToListTapped.extract(action) {
+            },
+            .on(adapter.addToListTapped) { state, product in
                 let lists = state.availableShoppingLists
                 return .task {
                     adapter.delegate.embed(.addToListRequested(product: product, availableLists: lists))
                 }
             }
-
-            return .none
-        }
+        )
     }
 
     static func makeProjection(shoppingLists: [ShoppingList]) -> Projection {

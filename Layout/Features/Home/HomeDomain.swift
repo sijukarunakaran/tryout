@@ -44,14 +44,9 @@ enum HomeDomain {
         )
     }
 
-    static let featureReducer = Reducer<State, Action> { state, action in
-        switch action {
-        case .setNavigationPath(let path):
-            state.navigationPath = path
-            return .none
-        default:
-            return .none
-        }
+    static let featureReducer = Reducer<State, Action>.on(Action.setNavigationPath) { state, path in
+        state.navigationPath = path
+        return .none
     }
 
     static let reducer: Reducer<State, Action> = .combine(

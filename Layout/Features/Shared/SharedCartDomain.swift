@@ -26,18 +26,15 @@ enum SharedCartDomain {
     >(
         adapter: ActionAdapter<Action>
     ) -> Reducer<State, Action> {
-        Reducer<State, Action> { state, action in
-            if let projection = adapter.projectionUpdated.extract(action) {
+        .combine(
+            .on(adapter.projectionUpdated) { state, projection in
                 state.cartQuantities = projection.cartQuantities
                 return .none
+            },
+            .on(adapter.addToCartTapped) { _, product in
+                .task { adapter.delegate.embed(.addToCart(product)) }
             }
-
-            if let product = adapter.addToCartTapped.extract(action) {
-                return .task { adapter.delegate.embed(.addToCart(product)) }
-            }
-
-            return .none
-        }
+        )
     }
 
     static func makeProjection(cart: CartState) -> Projection {

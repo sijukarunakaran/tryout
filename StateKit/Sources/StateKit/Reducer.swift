@@ -73,6 +73,31 @@ public extension Reducer {
         }
     }
 
+    /// Create a reducer that handles a single action case using a custom extraction function.
+    ///
+    /// Use this for action cases with multiple associated values that `@CasePathable` cannot
+    /// express as a single-value `CasePath`. The extraction function returns `nil` for
+    /// non-matching actions, which are then ignored and return `.none`.
+    ///
+    /// ```swift
+    /// .on(extract: { if case let .succeeded(code, msg) = $0 { return (code, msg) }; return nil }) { state, result in
+    ///     let (code, msg) = result
+    ///     state.notice = "\(code): \(msg)"
+    ///     return .none
+    /// }
+    /// ```
+    static func on<Value>(
+        extract: @escaping (Action) -> Value?,
+        perform: @escaping (inout State, Value) -> Effect<Action>
+    ) -> Reducer<State, Action> {
+        Reducer { state, action in
+            guard let value = extract(action) else { return .none }
+            return perform(&state, value)
+        }
+    }
+}
+
+public extension Reducer {
     /// Create a reducer that handles a single no-payload action case using a pattern-match predicate.
     ///
     /// Use this for action cases that carry no associated value, since Swift's naming rules prevent

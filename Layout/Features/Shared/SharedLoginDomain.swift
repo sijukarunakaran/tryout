@@ -27,10 +27,8 @@ enum SharedLoginDomain {
     static func makeReducer<State: SharedLoginDomain.State, Action: Sendable>(
         adapter: ActionAdapter<Action>
     ) -> Reducer<State, Action> {
-        Reducer { state, action in
-            if let projection = adapter.projectionUpdated.extract(action) {
-                state.isAuthenticated = projection.isAuthenticated
-            }
+        .on(adapter.projectionUpdated) { state, projection in
+            state.isAuthenticated = projection.isAuthenticated
             return .none
         }
     }

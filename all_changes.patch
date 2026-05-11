@@ -1,0 +1,1777 @@
+From 66fdc2d6596aaf222b16eadb0621faf326cecf30 Mon Sep 17 00:00:00 2001
+From: Siju Karunakran <karunakaran.siju@heb.com>
+Date: Wed, 29 Apr 2026 20:22:09 +0530
+Subject: [PATCH 1/3] Add unified state-based navigation with NavigationDomain
+
+- Introduce NavigationDomain owning all navigation state: selected tab,
+  per-tab NavigationStack paths (homeStack, browseStack), and modal sheets
+  (login, shoppingListFlow)
+- Add AppDestination enum for typed push routes shared by Home/Browse tabs
+- Remove productDetail and shoppingListFlow state from HomeDomain, BrowseDomain,
+  ShoppingListDomain and SharedShoppingListDomain adapter
+- Feature domains emit delegate actions; AppDomain bridges to NavigationDomain
+- HomeView and BrowseView use NavigationStack(path:) with .navigationDestination
+  for ProductDetailView (now data/callback-driven, no internal store)
+- AppRootView drives TabView, login sheet, and shopping list flow sheet from
+  NavigationDomain state
+- Add .onOpenURL deep link handler parsing layout:// scheme
+- Add NavigationDomainTests covering tab switching, stack ops, modals, and URL parsing
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ Layout/App/AppDomain.swift                    | 151 +++++++++++++-----
+ Layout/App/AppRootView.swift                  |  43 +++--
+ Layout/Features/Browse/BrowseDomain.swift     |  61 +------
+ Layout/Features/Browse/BrowseView.swift       |  35 ++--
+ Layout/Features/Home/HomeDomain.swift         |  61 +------
+ Layout/Features/Home/HomeView.swift           |  35 ++--
+ .../Features/Navigation/AppDestination.swift  |  21 +++
+ .../Navigation/NavigationDomain.swift         | 106 ++++++++++++
+ .../ProductDetail/ProductDetailDomain.swift   |  28 +---
+ .../ProductDetail/ProductDetailView.swift     | 148 ++++++++---------
+ .../Features/Shared/SharedLoginDomain.swift   |   1 +
+ .../Shared/SharedShoppingListDomain.swift     |  66 ++------
+ .../ShoppingList/ShoppingListDomain.swift     |  98 +++---------
+ .../ShoppingList/ShoppingListView.swift       |  14 --
+ Layout/LayoutApp.swift                        |   7 -
+ .../FileManagerDemoViewModelTests.swift       |   2 +-
+ LayoutTests/NavigationDomainTests.swift       | 134 ++++++++++++++++
+ 17 files changed, 535 insertions(+), 476 deletions(-)
+ create mode 100644 Layout/Features/Navigation/AppDestination.swift
+ create mode 100644 Layout/Features/Navigation/NavigationDomain.swift
+ create mode 100644 LayoutTests/NavigationDomainTests.swift
+
+diff --git a/Layout/App/AppDomain.swift b/Layout/App/AppDomain.swift
+index 3d9a9b6..7a57a9d 100644
+--- a/Layout/App/AppDomain.swift
++++ b/Layout/App/AppDomain.swift
+@@ -5,10 +5,9 @@ import StateKit
+ enum AppDomain {
+     @NonisolatedEquatable
+     struct State: Sendable {
+-        var selectedTab: AppTab = .home
++        var navigation = NavigationState()
+         var isAuthenticated = false
+         var pendingProtectedAction: SharedLoginDomain.ProtectedAction?
+-        var login: LoginState?
+         var browse = BrowseState()
+         var home = HomeState()
+         var cart = CartState()
+@@ -17,7 +16,7 @@ enum AppDomain {
+ 
+     @CasePathable
+     enum Action: Sendable {
+-        case selectedTabChanged(AppTab)
++        case navigation(NavigationAction)
+         case browse(BrowseAction)
+         case home(HomeAction)
+         case cart(CartAction)
+@@ -27,9 +26,13 @@ enum AppDomain {
+ 
+     static let reducer = Reducer<State, Action>.combine(
+         LoginDomain.reducer.optional.scope(
+-            state: \.login,
++            state: \.navigation.login,
+             action: Action.login
+         ),
++        NavigationDomain.reducer.scope(
++            state: \.navigation,
++            action: Action.navigation
++        ),
+         BrowseDomain.reducer.scope(
+             state: \.browse,
+             action: Action.browse
+@@ -48,80 +51,140 @@ enum AppDomain {
+         ),
+         Reducer<State, Action> { state, action in
+             switch action {
+-            case let .selectedTabChanged(tab):
+-                state.selectedTab = tab
++
++            // MARK: - Shopping list flow delegate (add to list from Home/Browse)
++
++            case let .home(.shoppingListDelegate(.addToListRequested(product, lists))),
++                let .browse(.shoppingListDelegate(.addToListRequested(product, lists))):
++                guard state.isAuthenticated else {
++                    state.pendingProtectedAction = .addToList(product)
++                    if state.navigation.login == nil {
++                        state.navigation.login = LoginState(id: UUID())
++                    }
++                    return .none
++                }
++                state.navigation.shoppingListFlow = ShoppingListFlowState(
++                    id: UUID(),
++                    product: product,
++                    mode: lists.isEmpty ? .create : .picker,
++                    availableLists: lists
++                )
+                 return .none
+ 
++            case let .home(.shoppingListDelegate(delegate)),
++                let .browse(.shoppingListDelegate(delegate)):
++                guard state.isAuthenticated else {
++                    let protectedAction = protectedAction(for: delegate)
++                    state.pendingProtectedAction = protectedAction
++                    if state.navigation.login == nil {
++                        state.navigation.login = LoginState(id: UUID())
++                    }
++                    return .none
++                }
++                return .task { shoppingListAction(for: delegate) }
++
++            // MARK: - Create list from ShoppingList tab
++
+             case .shoppingList(.delegate(.createListTapped)):
+                 guard state.isAuthenticated else {
+                     state.pendingProtectedAction = .startCreateList
+-                    if state.login == nil {
+-                        state.login = LoginState(id: UUID())
++                    if state.navigation.login == nil {
++                        state.navigation.login = LoginState(id: UUID())
+                     }
+                     return .none
+                 }
+-                return .task { .shoppingList(.openShoppingListFlow) }
++                state.navigation.shoppingListFlow = ShoppingListFlowState(
++                    id: UUID(),
++                    product: nil,
++                    mode: .create,
++                    availableLists: state.shoppingList.lists
++                )
++                return .none
++
++            // MARK: - Shopping list flow modal actions
++
++            case .navigation(.shoppingListFlow(.listSelected(let listID))):
++                guard let product = state.navigation.shoppingListFlow?.product else { return .none }
++                state.navigation.shoppingListFlow = nil
++                return .task { [product] in [
++                    .shoppingList(.addProductToList(product, listID)),
++                    .navigation(.dismissShoppingListFlow)
++                ]}
++
++            case .navigation(.shoppingListFlow(.createListConfirmed)):
++                guard let flow = state.navigation.shoppingListFlow else { return .none }
++                state.navigation.shoppingListFlow = nil
++                return .task { [flow] in [
++                    .shoppingList(.createList(name: flow.draftListName, product: flow.product)),
++                    .navigation(.dismissShoppingListFlow)
++                ]}
++
++            // MARK: - Cart delegates
+ 
+             case let .home(.cartDelegate(.addToCart(product))),
+                 let .browse(.cartDelegate(.addToCart(product))),
+                 let .shoppingList(.cartDelegate(.addToCart(product))):
+                 guard state.isAuthenticated else {
+                     state.pendingProtectedAction = .addToCart(product)
+-                    if state.login == nil {
+-                        state.login = LoginState(id: UUID())
++                    if state.navigation.login == nil {
++                        state.navigation.login = LoginState(id: UUID())
+                     }
+                     return .none
+                 }
+                 return .task { .cart(.add(product)) }
+ 
+-            case let .home(.shoppingListDelegate(delegate)),
+-                let .browse(.shoppingListDelegate(delegate)):
+-                guard state.isAuthenticated else {
+-                    let protectedAction = protectedAction(for: delegate)
+-                    state.pendingProtectedAction = protectedAction
+-                    if state.login == nil {
+-                        state.login = LoginState(id: UUID())
+-                    }
+-                    return .none
+-                }
+-                return .task {
+-                    shoppingListAction(for: delegate)
+-                }
++            // MARK: - Login delegates
+ 
+             case .login(.delegate(.signedIn)):
+                 state.isAuthenticated = true
+-                state.login = nil
++                state.navigation.login = nil
+                 let authActions = authProjectionActions(isAuthenticated: true)
+                 if let protectedAction = state.pendingProtectedAction {
+                     state.pendingProtectedAction = nil
+-                    return .task {
+-                        authActions + [mapAction(for: protectedAction)]
++                    switch protectedAction {
++                    case .startCreateList:
++                        state.navigation.shoppingListFlow = ShoppingListFlowState(
++                            id: UUID(),
++                            product: nil,
++                            mode: .create,
++                            availableLists: state.shoppingList.lists
++                        )
++                        return .task { authActions }
++
++                    case .addToList(let product):
++                        let lists = state.shoppingList.lists
++                        state.navigation.shoppingListFlow = ShoppingListFlowState(
++                            id: UUID(),
++                            product: product,
++                            mode: lists.isEmpty ? .create : .picker,
++                            availableLists: lists
++                        )
++                        return .task { authActions }
++
++                    default:
++                        return .task { authActions + [mapAction(for: protectedAction)] }
+                     }
+                 }
+-                return .task {
+-                    authActions
+-                }
++                return .task { authActions }
+ 
+             case .login(.delegate(.cancelled)):
+-                state.login = nil
++                state.navigation.login = nil
+                 state.pendingProtectedAction = nil
+                 return .none
+ 
++            // MARK: - Projection fanout
++
+             case .cart:
+                 let projection = SharedCartDomain.makeProjection(cart: state.cart)
+-                return .task {
+-                    cartProjectionActions(for: projection)
+-                }
++                return .task { cartProjectionActions(for: projection) }
+ 
+             case .shoppingList:
+                 let projection = SharedShoppingListDomain.makeProjection(
+                     shoppingLists: state.shoppingList.lists
+                 )
+-                return .task {
+-                    shoppingListProjectionActions(for: projection)
+-                }
++                return .task { shoppingListProjectionActions(for: projection) }
+ 
+-            case .browse, .home, .login:
++            case .browse, .home, .login, .navigation:
+                 return .none
+             }
+         }
+@@ -136,6 +199,10 @@ enum AppDomain {
+ 
+         case let .createList(name, product):
+             .shoppingList(.createList(name: name, product: product))
++
++        case .addToListRequested:
++            // Handled inline above (requires state access)
++            fatalError("addToListRequested must be handled inline in the combined reducer")
+         }
+     }
+ 
+@@ -148,6 +215,9 @@ enum AppDomain {
+ 
+         case let .createList(name, product):
+             .createList(name: name, product: product)
++
++        case .addToListRequested:
++            fatalError("addToListRequested must be handled inline in the combined reducer")
+         }
+     }
+ 
+@@ -164,8 +234,9 @@ enum AppDomain {
+         case let .createList(name, product):
+             .shoppingList(.createList(name: name, product: product))
+ 
+-        case .startCreateList:
+-            .shoppingList(.openShoppingListFlow)
++        case .startCreateList, .addToList:
++            // Handled inline in the combined reducer (requires state access)
++            fatalError("startCreateList / addToList must be handled inline in the combined reducer")
+         }
+     }
+ 
+diff --git a/Layout/App/AppRootView.swift b/Layout/App/AppRootView.swift
+index 92a8364..238e6cd 100644
+--- a/Layout/App/AppRootView.swift
++++ b/Layout/App/AppRootView.swift
+@@ -9,9 +9,13 @@ struct AppRootView: View {
+ 
+     var body: some View {
+         let loginStore = store.ifLet(
+-            state: \.login,
++            state: \.navigation.login,
+             action: AppAction.login
+         )
++        let shoppingListFlowStore = store.ifLet(
++            state: \.navigation.shoppingListFlow,
++            action: { AppAction.navigation(.shoppingListFlow($0)) }
++        )
+         let homeStore = store.scope(
+             state: { @Sendable appState in
+                 appState.home
+@@ -36,29 +40,37 @@ struct AppRootView: View {
+             },
+             action: AppAction.shoppingList
+         )
+-        
++
+         TabView(
+             selection: store.binding(
+-                state: \.selectedTab,
+-                action: AppAction.selectedTabChanged
++                state: \.navigation.selectedTab,
++                action: { AppAction.navigation(.selectTab($0)) }
+             )
+         ) {
+             HomeView(
+-                store: homeStore
++                store: homeStore,
++                navigationPath: store.binding(
++                    state: \.navigation.homeStack,
++                    action: { AppAction.navigation(.setHomeStack($0)) }
++                )
+             )
+             .tabItem {
+                 Label("Home", systemImage: "house.fill")
+             }
+             .tag(AppTab.home)
+-            
++
+             BrowseView(
+-                store: browseStore
++                store: browseStore,
++                navigationPath: store.binding(
++                    state: \.navigation.browseStack,
++                    action: { AppAction.navigation(.setBrowseStack($0)) }
++                )
+             )
+             .tabItem {
+                 Label("Browse", systemImage: "square.grid.2x2.fill")
+             }
+             .tag(AppTab.browse)
+-            
++
+             CartView(
+                 store: cartStore
+             )
+@@ -77,13 +89,26 @@ struct AppRootView: View {
+             .tag(AppTab.shoppingLists)
+         }
+         .tint(Color(red: 0.13, green: 0.39, blue: 0.28))
++        .onOpenURL { url in
++            store.send(.navigation(.openURL(url)))
++        }
+         .sheet(
+-            item: store.binding(state: \.login, action: .login(.cancelTapped))
++            item: store.binding(state: \.navigation.login, action: .login(.cancelTapped))
+         ) { _ in
+             if let loginStore {
+                 LoginView(store: loginStore)
+             }
+         }
++        .sheet(
++            item: store.binding(
++                state: \.navigation.shoppingListFlow,
++                action: AppAction.navigation(.dismissShoppingListFlow)
++            )
++        ) { _ in
++            if let shoppingListFlowStore {
++                ShoppingListFlowSheet(store: shoppingListFlowStore)
++            }
++        }
+     }
+ 
+     private var cartItemCount: Int {
+diff --git a/Layout/Features/Browse/BrowseDomain.swift b/Layout/Features/Browse/BrowseDomain.swift
+index 2d3cfaf..c8a2dcc 100644
+--- a/Layout/Features/Browse/BrowseDomain.swift
++++ b/Layout/Features/Browse/BrowseDomain.swift
+@@ -9,8 +9,6 @@ enum BrowseDomain {
+         var isAuthenticated = false
+         var cartQuantities: [Product.ID: Int] = [:]
+         var availableShoppingLists: [ShoppingList] = []
+-        var productDetail: ProductDetailState?
+-        var shoppingListFlow: ShoppingListFlowState?
+     }
+ 
+     @CasePathable
+@@ -18,11 +16,8 @@ enum BrowseDomain {
+         case authProjectionUpdated(SharedLoginDomain.Projection)
+         case cartProjectionUpdated(SharedCartDomain.Projection)
+         case shoppingListProjectionUpdated(SharedShoppingListDomain.Projection)
+-        case productTapped(Product)
+         case addToCartTapped(Product)
+         case addToListTapped(Product)
+-        case productDetail(ProductDetailAction)
+-        case shoppingListFlow(ShoppingListFlowAction)
+         case cartDelegate(SharedCartDomain.Delegate)
+         case shoppingListDelegate(SharedShoppingListDomain.Delegate)
+     }
+@@ -43,68 +38,14 @@ enum BrowseDomain {
+         SharedShoppingListDomain.ActionAdapter(
+             projectionUpdated: Action.shoppingListProjectionUpdated,
+             addToListTapped: Action.addToListTapped,
+-            shoppingListFlow: Action.shoppingListFlow,
+             delegate: Action.shoppingListDelegate
+         )
+     }
+ 
+-    static let featureReducer = Reducer<State, Action>.combine(
+-        productDetailReducer.optional.scope(
+-            state: \.productDetail,
+-            action: Action.productDetail
+-        ),
+-        Reducer<State, Action> { state, action in
+-        switch action {
+-        case let .productTapped(product):
+-            state.productDetail = ProductDetailState(
+-                product: product,
+-                cartQuantity: state.cartQuantities[product.id] ?? 0,
+-                availableShoppingLists: state.availableShoppingLists
+-            )
+-            return .none
+-
+-        case .productDetail(.dismissed):
+-            state.productDetail = nil
+-            return .none
+-
+-        case .productDetail(.addToCartTapped(let product)):
+-            return .task { .addToCartTapped(product) }
+-
+-        case let .cartProjectionUpdated(projection):
+-            if let id = state.productDetail?.product.id {
+-                state.productDetail?.cartQuantity = projection.cartQuantities[id] ?? 0
+-            }
+-            return .none
+-
+-        case let .shoppingListProjectionUpdated(projection):
+-            state.productDetail?.availableShoppingLists = projection.shoppingLists
+-            state.productDetail?.shoppingListFlow?.availableLists = projection.shoppingLists
+-            return .none
+-
+-        case .productDetail(.shoppingListFlow(.listSelected(let listID))):
+-            guard let product = state.productDetail?.shoppingListFlow?.product else {
+-                return .none
+-            }
+-            state.productDetail?.shoppingListFlow = nil
+-            return .task { .shoppingListDelegate(.addProductToList(product, listID)) }
+-
+-        case .productDetail(.shoppingListFlow(.createListConfirmed)):
+-            guard let flow = state.productDetail?.shoppingListFlow else {
+-                return .none
+-            }
+-            state.productDetail?.shoppingListFlow = nil
+-            return .task { .shoppingListDelegate(.createList(name: flow.draftListName, product: flow.product)) }
+-
+-        default:
+-            return .none
+-        }
+-    })
+-
+     static let reducer: Reducer<State, Action> = .combine(
+         SharedLoginDomain.makeReducer(adapter: loginAdapter),
+         SharedCartDomain.makeReducer(adapter: cartAdapter),
+-        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter),
+-        featureReducer
++        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter)
+     )
+ }
+ 
+diff --git a/Layout/Features/Browse/BrowseView.swift b/Layout/Features/Browse/BrowseView.swift
+index 3b7e054..66074b6 100644
+--- a/Layout/Features/Browse/BrowseView.swift
++++ b/Layout/Features/Browse/BrowseView.swift
+@@ -3,18 +3,10 @@ import SwiftUI
+ 
+ struct BrowseView: View {
+     var store: Store<BrowseState, BrowseAction>
++    @Binding var navigationPath: [AppDestination]
+ 
+     var body: some View {
+-        let productDetailStore = store.ifLet(
+-            state: \.productDetail,
+-            action: BrowseAction.productDetail
+-        )
+-        let shoppingListFlowStore = store.ifLet(
+-            state: \.shoppingListFlow,
+-            action: BrowseAction.shoppingListFlow
+-        )
+-
+-        NavigationStack {
++        NavigationStack(path: $navigationPath) {
+             List {
+                 ForEach(ProductCategory.allCases, id: \.rawValue) { category in
+                     let products = store.state.products.filter { $0.category == category }
+@@ -27,7 +19,7 @@ struct BrowseView: View {
+                                     product: product,
+                                     quantityInCart: quantityInCart,
+                                     openDetail: {
+-                                        store.send(.productTapped(product))
++                                        navigationPath.append(.productDetail(product))
+                                     },
+                                     addToCart: {
+                                         store.send(.addToCartTapped(product))
+@@ -45,21 +37,14 @@ struct BrowseView: View {
+             .scrollContentBackground(.hidden)
+             .background(Color(red: 0.94, green: 0.95, blue: 0.92))
+             .navigationTitle("Browse")
+-            .sheet(
+-                item: store.binding(state: \.productDetail, action: .productDetail(.dismissed))
+-            ) { _ in
+-                if let productDetailStore {
++            .navigationDestination(for: AppDestination.self) { destination in
++                switch destination {
++                case .productDetail(let product):
+                     ProductDetailView(
+-                        store: productDetailStore
+-                    )
+-                }
+-            }
+-            .sheet(
+-                item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
+-            ) { _ in
+-                if let shoppingListFlowStore {
+-                    ShoppingListFlowSheet(
+-                        store: shoppingListFlowStore
++                        product: product,
++                        cartQuantity: store.state.cartQuantities[product.id] ?? 0,
++                        onAddToCart: { store.send(.addToCartTapped(product)) },
++                        onAddToList: { store.send(.addToListTapped(product)) }
+                     )
+                 }
+             }
+diff --git a/Layout/Features/Home/HomeDomain.swift b/Layout/Features/Home/HomeDomain.swift
+index 09c3668..d087fd3 100644
+--- a/Layout/Features/Home/HomeDomain.swift
++++ b/Layout/Features/Home/HomeDomain.swift
+@@ -9,8 +9,6 @@ enum HomeDomain {
+         var isAuthenticated = false
+         var cartQuantities: [Product.ID: Int] = [:]
+         var availableShoppingLists: [ShoppingList] = []
+-        var productDetail: ProductDetailState?
+-        var shoppingListFlow: ShoppingListFlowState?
+     }
+ 
+     @CasePathable
+@@ -18,11 +16,8 @@ enum HomeDomain {
+         case authProjectionUpdated(SharedLoginDomain.Projection)
+         case cartProjectionUpdated(SharedCartDomain.Projection)
+         case shoppingListProjectionUpdated(SharedShoppingListDomain.Projection)
+-        case productTapped(Product)
+         case addToCartTapped(Product)
+         case addToListTapped(Product)
+-        case productDetail(ProductDetailAction)
+-        case shoppingListFlow(ShoppingListFlowAction)
+         case cartDelegate(SharedCartDomain.Delegate)
+         case shoppingListDelegate(SharedShoppingListDomain.Delegate)
+     }
+@@ -43,68 +38,14 @@ enum HomeDomain {
+         SharedShoppingListDomain.ActionAdapter(
+             projectionUpdated: Action.shoppingListProjectionUpdated,
+             addToListTapped: Action.addToListTapped,
+-            shoppingListFlow: Action.shoppingListFlow,
+             delegate: Action.shoppingListDelegate
+         )
+     }
+ 
+-    static let featureReducer = Reducer<State, Action>.combine(
+-        productDetailReducer.optional.scope(
+-            state: \.productDetail,
+-            action: Action.productDetail
+-        ),
+-        Reducer<State, Action> { state, action in
+-        switch action {
+-        case let .productTapped(product):
+-            state.productDetail = ProductDetailState(
+-                product: product,
+-                cartQuantity: state.cartQuantities[product.id] ?? 0,
+-                availableShoppingLists: state.availableShoppingLists
+-            )
+-            return .none
+-
+-        case .productDetail(.dismissed):
+-            state.productDetail = nil
+-            return .none
+-
+-        case .productDetail(.addToCartTapped(let product)):
+-            return .task { .addToCartTapped(product) }
+-
+-        case let .cartProjectionUpdated(projection):
+-            if let id = state.productDetail?.product.id {
+-                state.productDetail?.cartQuantity = projection.cartQuantities[id] ?? 0
+-            }
+-            return .none
+-
+-        case let .shoppingListProjectionUpdated(projection):
+-            state.productDetail?.availableShoppingLists = projection.shoppingLists
+-            state.productDetail?.shoppingListFlow?.availableLists = projection.shoppingLists
+-            return .none
+-
+-        case .productDetail(.shoppingListFlow(.listSelected(let listID))):
+-            guard let product = state.productDetail?.shoppingListFlow?.product else {
+-                return .none
+-            }
+-            state.productDetail?.shoppingListFlow = nil
+-            return .task { .shoppingListDelegate(.addProductToList(product, listID)) }
+-
+-        case .productDetail(.shoppingListFlow(.createListConfirmed)):
+-            guard let flow = state.productDetail?.shoppingListFlow else {
+-                return .none
+-            }
+-            state.productDetail?.shoppingListFlow = nil
+-            return .task { .shoppingListDelegate(.createList(name: flow.draftListName, product: flow.product)) }
+-
+-        default:
+-            return .none
+-        }
+-    })
+-
+     static let reducer: Reducer<State, Action> = .combine(
+         SharedLoginDomain.makeReducer(adapter: loginAdapter),
+         SharedCartDomain.makeReducer(adapter: cartAdapter),
+-        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter),
+-        featureReducer
++        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter)
+     )
+ }
+ 
+diff --git a/Layout/Features/Home/HomeView.swift b/Layout/Features/Home/HomeView.swift
+index 4db1a86..c843f61 100644
+--- a/Layout/Features/Home/HomeView.swift
++++ b/Layout/Features/Home/HomeView.swift
+@@ -3,18 +3,10 @@ import SwiftUI
+ 
+ struct HomeView: View {
+     var store: Store<HomeState, HomeAction>
++    @Binding var navigationPath: [AppDestination]
+ 
+     var body: some View {
+-        let productDetailStore = store.ifLet(
+-            state: \.productDetail,
+-            action: HomeAction.productDetail
+-        )
+-        let shoppingListFlowStore = store.ifLet(
+-            state: \.shoppingListFlow,
+-            action: HomeAction.shoppingListFlow
+-        )
+-
+-        NavigationStack {
++        NavigationStack(path: $navigationPath) {
+             ScrollView {
+                 VStack(alignment: .leading, spacing: 18) {
+                     heroSection
+@@ -27,7 +19,7 @@ struct HomeView: View {
+                                 product: product,
+                                 quantityInCart: quantityInCart,
+                                 openDetail: {
+-                                    store.send(.productTapped(product))
++                                    navigationPath.append(.productDetail(product))
+                                 },
+                                 addToCart: {
+                                     store.send(.addToCartTapped(product))
+@@ -43,21 +35,14 @@ struct HomeView: View {
+             }
+             .background(Color(red: 0.96, green: 0.95, blue: 0.90))
+             .navigationTitle("Home")
+-            .sheet(
+-                item: store.binding(state: \.productDetail, action: .productDetail(.dismissed))
+-            ) { _ in
+-                if let productDetailStore {
++            .navigationDestination(for: AppDestination.self) { destination in
++                switch destination {
++                case .productDetail(let product):
+                     ProductDetailView(
+-                        store: productDetailStore
+-                    )
+-                }
+-            }
+-            .sheet(
+-                item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
+-            ) { _ in
+-                if let shoppingListFlowStore {
+-                    ShoppingListFlowSheet(
+-                        store: shoppingListFlowStore
++                        product: product,
++                        cartQuantity: store.state.cartQuantities[product.id] ?? 0,
++                        onAddToCart: { store.send(.addToCartTapped(product)) },
++                        onAddToList: { store.send(.addToListTapped(product)) }
+                     )
+                 }
+             }
+diff --git a/Layout/Features/Navigation/AppDestination.swift b/Layout/Features/Navigation/AppDestination.swift
+new file mode 100644
+index 0000000..7c826b1
+--- /dev/null
++++ b/Layout/Features/Navigation/AppDestination.swift
+@@ -0,0 +1,21 @@
++import Foundation
++
++enum AppDestination: Sendable {
++    case productDetail(Product)
++}
++
++extension AppDestination: Hashable {
++    static func == (lhs: AppDestination, rhs: AppDestination) -> Bool {
++        switch (lhs, rhs) {
++        case (.productDetail(let a), .productDetail(let b)):
++            a.id == b.id
++        }
++    }
++
++    func hash(into hasher: inout Hasher) {
++        switch self {
++        case .productDetail(let product):
++            hasher.combine(product.id)
++        }
++    }
++}
+diff --git a/Layout/Features/Navigation/NavigationDomain.swift b/Layout/Features/Navigation/NavigationDomain.swift
+new file mode 100644
+index 0000000..b0a78aa
+--- /dev/null
++++ b/Layout/Features/Navigation/NavigationDomain.swift
+@@ -0,0 +1,106 @@
++import Foundation
++import StateKit
++
++@Feature
++enum NavigationDomain {
++    @NonisolatedEquatable
++    struct State: Sendable {
++        var selectedTab: AppTab = .home
++        var homeStack: [AppDestination] = []
++        var browseStack: [AppDestination] = []
++        var login: LoginState?
++        var shoppingListFlow: ShoppingListFlowState?
++    }
++
++    @CasePathable
++    enum Action: Sendable {
++        case selectTab(AppTab)
++        case setHomeStack([AppDestination])
++        case setBrowseStack([AppDestination])
++        case presentLogin
++        case dismissLogin
++        case presentShoppingListFlow(ShoppingListFlowState)
++        case dismissShoppingListFlow
++        case shoppingListFlow(ShoppingListFlowAction)
++        case openURL(URL)
++    }
++
++    static let reducer = Reducer<State, Action>.combine(
++        shoppingListFlowReducer.optional.scope(
++            state: \.shoppingListFlow,
++            action: Action.shoppingListFlow
++        ),
++        Reducer<State, Action> { state, action in
++            switch action {
++            case .selectTab(let tab):
++                state.selectedTab = tab
++                return .none
++
++            case .setHomeStack(let path):
++                state.homeStack = path
++                return .none
++
++            case .setBrowseStack(let path):
++                state.browseStack = path
++                return .none
++
++            case .presentLogin:
++                if state.login == nil {
++                    state.login = LoginState(id: UUID())
++                }
++                return .none
++
++            case .dismissLogin:
++                state.login = nil
++                return .none
++
++            case .presentShoppingListFlow(let flowState):
++                state.shoppingListFlow = flowState
++                return .none
++
++            case .dismissShoppingListFlow:
++                state.shoppingListFlow = nil
++                return .none
++
++            case .shoppingListFlow(.dismissed):
++                state.shoppingListFlow = nil
++                return .none
++
++            case .shoppingListFlow:
++                return .none
++
++            case .openURL(let url):
++                guard
++                    let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
++                    components.scheme == "layout"
++                else { return .none }
++
++                let host = components.host ?? ""
++                let pathSegment = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
++
++                switch host {
++                case "product":
++                    guard
++                        let uuid = UUID(uuidString: pathSegment),
++                        let product = Product.catalog.first(where: { $0.id == uuid })
++                    else { return .none }
++                    state.selectedTab = .home
++                    state.homeStack.append(.productDetail(product))
++
++                case "cart":
++                    state.selectedTab = .cart
++
++                case "lists":
++                    state.selectedTab = .shoppingLists
++
++                default:
++                    break
++                }
++                return .none
++            }
++        }
++    )
++}
++
++typealias NavigationState = NavigationDomain.State
++typealias NavigationAction = NavigationDomain.Action
+diff --git a/Layout/Features/ProductDetail/ProductDetailDomain.swift b/Layout/Features/ProductDetail/ProductDetailDomain.swift
+index cdb7c88..089f48b 100644
+--- a/Layout/Features/ProductDetail/ProductDetailDomain.swift
++++ b/Layout/Features/ProductDetail/ProductDetailDomain.swift
+@@ -8,7 +8,6 @@ enum ProductDetailDomain {
+         case dismissed
+         case addToCartTapped(Product)
+         case addToListTapped
+-        case shoppingListFlow(ShoppingListFlowAction)
+     }
+ 
+     @NonisolatedEquatable
+@@ -16,38 +15,13 @@ enum ProductDetailDomain {
+         var product: Product
+         var cartQuantity = 0
+         var availableShoppingLists: [ShoppingList] = []
+-        var shoppingListFlow: ShoppingListFlowState?
+ 
+         var id: Product.ID {
+             product.id
+         }
+     }
+ 
+-    static let reducer = Reducer<State, Action>.combine(
+-        shoppingListFlowReducer.optional.scope(
+-            state: \.shoppingListFlow,
+-            action: Action.shoppingListFlow
+-        ),
+-        Reducer<State, Action> { state, action in
+-            switch action {
+-            case .addToListTapped:
+-                state.shoppingListFlow = ShoppingListFlowState(
+-                    id: UUID(),
+-                    product: state.product,
+-                    mode: state.availableShoppingLists.isEmpty ? .create : .picker,
+-                    availableLists: state.availableShoppingLists
+-                )
+-                return .none
+-
+-            case .shoppingListFlow(.dismissed):
+-                state.shoppingListFlow = nil
+-                return .none
+-
+-            case .dismissed, .addToCartTapped, .shoppingListFlow:
+-                return .none
+-            }
+-        }
+-    )
++    static let reducer = Reducer<State, Action> { _, _ in .none }
+ }
+ 
+ typealias ProductDetailState = ProductDetailDomain.State
+diff --git a/Layout/Features/ProductDetail/ProductDetailView.swift b/Layout/Features/ProductDetail/ProductDetailView.swift
+index c111cb8..56f1258 100644
+--- a/Layout/Features/ProductDetail/ProductDetailView.swift
++++ b/Layout/Features/ProductDetail/ProductDetailView.swift
+@@ -2,101 +2,85 @@ import StateKit
+ import SwiftUI
+ 
+ struct ProductDetailView: View {
+-    var store: Store<ProductDetailState, ProductDetailAction>
++    let product: Product
++    let cartQuantity: Int
++    let onAddToCart: () -> Void
++    let onAddToList: () -> Void
+ 
+     var body: some View {
+-        let shoppingListFlowStore = store.ifLet(
+-            state: \.shoppingListFlow,
+-            action: ProductDetailAction.shoppingListFlow
+-        )
+-
+-        NavigationStack {
+-            ScrollView {
+-                VStack(alignment: .leading, spacing: 22) {
+-                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+-                        .fill(
+-                            LinearGradient(
+-                                colors: [store.state.product.accentColor.primary, store.state.product.accentColor.secondary],
+-                                startPoint: .topLeading,
+-                                endPoint: .bottomTrailing
+-                            )
++        ScrollView {
++            VStack(alignment: .leading, spacing: 22) {
++                RoundedRectangle(cornerRadius: 32, style: .continuous)
++                    .fill(
++                        LinearGradient(
++                            colors: [product.accentColor.primary, product.accentColor.secondary],
++                            startPoint: .topLeading,
++                            endPoint: .bottomTrailing
+                         )
+-                        .frame(height: 260)
+-                        .overlay(alignment: .bottomLeading) {
+-                            Text(store.state.product.name)
+-                                .font(.system(size: 34, weight: .black, design: .rounded))
+-                                .foregroundStyle(.white)
+-                                .padding(24)
+-                        }
++                    )
++                    .frame(height: 260)
++                    .overlay(alignment: .bottomLeading) {
++                        Text(product.name)
++                            .font(.system(size: 34, weight: .black, design: .rounded))
++                            .foregroundStyle(.white)
++                            .padding(24)
++                    }
+ 
+-                    VStack(alignment: .leading, spacing: 12) {
+-                        Text(store.state.product.subtitle)
+-                            .font(.title3.weight(.semibold))
++                VStack(alignment: .leading, spacing: 12) {
++                    Text(product.subtitle)
++                        .font(.title3.weight(.semibold))
+ 
+-                        Text("Perfect for the week ahead. This detail page uses the same root-owned cart state as the Home tab, so the add-to-cart quantity always stays in sync.")
+-                            .font(.body)
+-                            .foregroundStyle(.secondary)
++                    Text("Perfect for the week ahead. This detail page uses the same root-owned cart state as the Home tab, so the add-to-cart quantity always stays in sync.")
++                        .font(.body)
++                        .foregroundStyle(.secondary)
+ 
+-                        Text(store.state.product.price.formatted(.currency(code: "USD")))
+-                            .font(.system(size: 28, weight: .bold, design: .rounded))
+-                            .foregroundStyle(store.state.product.accentColor.primary)
+-                    }
++                    Text(product.price.formatted(.currency(code: "USD")))
++                        .font(.system(size: 28, weight: .bold, design: .rounded))
++                        .foregroundStyle(product.accentColor.primary)
++                }
+ 
+-                    Button(action: {
+-                        store.send(.addToCartTapped(store.state.product))
+-                    }) {
+-                        HStack {
+-                            Text(store.state.cartQuantity == 0 ? "Add to Cart" : "Add Another")
+-                            Spacer()
+-                            if store.state.cartQuantity > 0 {
+-                                Text("\(store.state.cartQuantity)")
+-                                    .font(.caption.weight(.bold))
+-                                    .padding(.horizontal, 10)
+-                                    .padding(.vertical, 6)
+-                                    .background(.white.opacity(0.22), in: Capsule())
+-                            } else {
+-                                Image(systemName: "plus")
+-                            }
++                Button(action: onAddToCart) {
++                    HStack {
++                        Text(cartQuantity == 0 ? "Add to Cart" : "Add Another")
++                        Spacer()
++                        if cartQuantity > 0 {
++                            Text("\(cartQuantity)")
++                                .font(.caption.weight(.bold))
++                                .padding(.horizontal, 10)
++                                .padding(.vertical, 6)
++                                .background(.white.opacity(0.22), in: Capsule())
++                        } else {
++                            Image(systemName: "plus")
+                         }
+-                        .font(.headline)
+-                        .padding(.horizontal, 18)
+-                        .padding(.vertical, 16)
+-                        .foregroundStyle(.white)
+-                        .frame(maxWidth: .infinity)
+-                        .background(store.state.product.accentColor.primary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                     }
+-                    .buttonStyle(.plain)
++                    .font(.headline)
++                    .padding(.horizontal, 18)
++                    .padding(.vertical, 16)
++                    .foregroundStyle(.white)
++                    .frame(maxWidth: .infinity)
++                    .background(product.accentColor.primary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
++                }
++                .buttonStyle(.plain)
+ 
+-                    Button(action: {
+-                        store.send(.addToListTapped)
+-                    }) {
+-                        HStack {
+-                            Text("Add to Shopping List")
+-                            Spacer()
+-                            Image(systemName: "text.badge.plus")
+-                        }
+-                        .font(.headline)
+-                        .padding(.horizontal, 18)
+-                        .padding(.vertical, 16)
+-                        .foregroundStyle(.primary)
+-                        .frame(maxWidth: .infinity)
+-                        .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
++                Button(action: onAddToList) {
++                    HStack {
++                        Text("Add to Shopping List")
++                        Spacer()
++                        Image(systemName: "text.badge.plus")
+                     }
+-                    .buttonStyle(.plain)
+-                }
+-                .padding(20)
+-            }
+-            .background(Color(red: 0.97, green: 0.96, blue: 0.93))
+-            .navigationTitle("Product")
+-            .sheet(
+-                item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
+-            ) { _ in
+-                if let shoppingListFlowStore {
+-                    ShoppingListFlowSheet(
+-                        store: shoppingListFlowStore
+-                    )
++                    .font(.headline)
++                    .padding(.horizontal, 18)
++                    .padding(.vertical, 16)
++                    .foregroundStyle(.primary)
++                    .frame(maxWidth: .infinity)
++                    .background(Color.black.opacity(0.05), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                 }
++                .buttonStyle(.plain)
+             }
++            .padding(20)
+         }
++        .background(Color(red: 0.97, green: 0.96, blue: 0.93))
++        .navigationTitle("Product")
++        .navigationBarTitleDisplayMode(.inline)
+     }
+ }
+diff --git a/Layout/Features/Shared/SharedLoginDomain.swift b/Layout/Features/Shared/SharedLoginDomain.swift
+index 658b77a..9bf04e8 100644
+--- a/Layout/Features/Shared/SharedLoginDomain.swift
++++ b/Layout/Features/Shared/SharedLoginDomain.swift
+@@ -17,6 +17,7 @@ enum SharedLoginDomain {
+         case addProductToList(Product, ShoppingList.ID)
+         case createList(name: String, product: Product?)
+         case startCreateList
++        case addToList(Product)
+     }
+ 
+     struct ActionAdapter<Action: Sendable> {
+diff --git a/Layout/Features/Shared/SharedShoppingListDomain.swift b/Layout/Features/Shared/SharedShoppingListDomain.swift
+index 8056fe0..7c19300 100644
+--- a/Layout/Features/Shared/SharedShoppingListDomain.swift
++++ b/Layout/Features/Shared/SharedShoppingListDomain.swift
+@@ -5,6 +5,7 @@ enum SharedShoppingListDomain {
+     enum Delegate: Sendable {
+         case addProductToList(Product, ShoppingList.ID)
+         case createList(name: String, product: Product?)
++        case addToListRequested(product: Product, availableLists: [ShoppingList])
+     }
+ 
+     struct Projection: Sendable {
+@@ -13,73 +14,32 @@ enum SharedShoppingListDomain {
+ 
+     protocol State: Sendable {
+         var availableShoppingLists: [ShoppingList] { get set }
+-        var shoppingListFlow: ShoppingListFlowState? { get set }
+     }
+ 
+     struct ActionAdapter<Action: Sendable> {
+         var projectionUpdated: CasePath<Action, Projection>
+         var addToListTapped: CasePath<Action, Product>
+-        var shoppingListFlow: CasePath<Action, ShoppingListFlowAction>
+         var delegate: CasePath<Action, Delegate>
+     }
+ 
+     static func makeReducer<State: SharedShoppingListDomain.State, Action: Sendable>(
+         adapter: ActionAdapter<Action>
+     ) -> Reducer<State, Action> {
+-        Reducer<State, Action>.combine(
+-            shoppingListFlowReducer.optional.scope(
+-                state: \.shoppingListFlow,
+-                action: adapter.shoppingListFlow
+-            ),
+-            Reducer<State, Action> { state, action in
+-                if let projection = adapter.projectionUpdated.extract(action) {
+-                    state.availableShoppingLists = projection.shoppingLists
+-                    state.shoppingListFlow?.availableLists = projection.shoppingLists
+-                    return .none
+-                }
+-
+-                if let product = adapter.addToListTapped.extract(action) {
+-                    state.shoppingListFlow = ShoppingListFlowState(
+-                        id: UUID(),
+-                        product: product,
+-                        mode: state.availableShoppingLists.isEmpty ? .create : .picker,
+-                        availableLists: state.availableShoppingLists
+-                    )
+-                    return .none
+-                }
+-
+-                if let flowAction = adapter.shoppingListFlow.extract(action) {
+-                    switch flowAction {
+-                    case let .listSelected(listID):
+-                        guard let product = state.shoppingListFlow?.product else {
+-                            return .none
+-                        }
+-                        state.shoppingListFlow = nil
+-                        return .task {
+-                            adapter.delegate.embed(.addProductToList(product, listID))
+-                        }
+-
+-                    case .createListConfirmed:
+-                        guard let flow = state.shoppingListFlow else {
+-                            return .none
+-                        }
+-                        state.shoppingListFlow = nil
+-                        return .task {
+-                            adapter.delegate.embed(.createList(name: flow.draftListName, product: flow.product))
+-                        }
+-
+-                    case .dismissed:
+-                        state.shoppingListFlow = nil
+-                        return .none
++        Reducer<State, Action> { state, action in
++            if let projection = adapter.projectionUpdated.extract(action) {
++                state.availableShoppingLists = projection.shoppingLists
++                return .none
++            }
+ 
+-                    case .createNewListTapped, .draftListNameChanged:
+-                        return .none
+-                    }
++            if let product = adapter.addToListTapped.extract(action) {
++                let lists = state.availableShoppingLists
++                return .task {
++                    adapter.delegate.embed(.addToListRequested(product: product, availableLists: lists))
+                 }
+-
+-                return .none
+             }
+-        )
++
++            return .none
++        }
+     }
+ 
+     static func makeProjection(shoppingLists: [ShoppingList]) -> Projection {
+diff --git a/Layout/Features/ShoppingList/ShoppingListDomain.swift b/Layout/Features/ShoppingList/ShoppingListDomain.swift
+index 9bb2747..14f0ab8 100644
+--- a/Layout/Features/ShoppingList/ShoppingListDomain.swift
++++ b/Layout/Features/ShoppingList/ShoppingListDomain.swift
+@@ -55,7 +55,6 @@ enum ShoppingListDomain {
+         var isAuthenticated = false
+         var lists: [ShoppingList] = []
+         var cartQuantities: [Product.ID: Int] = [:]
+-        var shoppingListFlow: ShoppingListFlowState?
+     }
+ 
+     enum Delegate: Sendable {
+@@ -67,11 +66,9 @@ enum ShoppingListDomain {
+         case authProjectionUpdated(SharedLoginDomain.Projection)
+         case cartProjectionUpdated(SharedCartDomain.Projection)
+         case createListButtonTapped
+-        case openShoppingListFlow
+         case createList(name: String, product: Product?)
+         case addProductToList(Product, ShoppingList.ID)
+         case addToCartTapped(Product)
+-        case shoppingListFlow(ShoppingListFlowAction)
+         case cartDelegate(SharedCartDomain.Delegate)
+         case delegate(Delegate)
+     }
+@@ -88,82 +85,37 @@ enum ShoppingListDomain {
+         )
+     }
+ 
+-    static let featureReducer = Reducer<State, Action>.combine(
+-        shoppingListFlowReducer.optional.scope(
+-            state: \.shoppingListFlow,
+-            action: Action.shoppingListFlow
+-        ),
+-        Reducer<State, Action> { state, action in
+-            switch action {
+-            case .createListButtonTapped:
+-                return .task { .delegate(.createListTapped) }
+-
+-            case .openShoppingListFlow:
+-                state.shoppingListFlow = ShoppingListFlowState(
++    static let featureReducer = Reducer<State, Action> { state, action in
++        switch action {
++        case .createListButtonTapped:
++            return .task { .delegate(.createListTapped) }
++
++        case let .createList(name, product):
++            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
++            guard trimmedName.isEmpty == false else { return .none }
++            state.lists.append(
++                ShoppingList(
+                     id: UUID(),
+-                    product: nil,
+-                    mode: .create,
+-                    availableLists: state.lists
+-                )
+-                return .none
+-
+-            case let .createList(name, product):
+-                let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+-                guard trimmedName.isEmpty == false else { return .none }
+-                state.lists.append(
+-                    ShoppingList(
+-                        id: UUID(),
+-                        name: trimmedName,
+-                        products: product.map { [$0] } ?? []
+-                    )
+-                )
+-                state.shoppingListFlow = nil
+-                return .none
+-
+-            case let .addProductToList(product, listID):
+-                guard let index = state.lists.firstIndex(where: { $0.id == listID }) else {
+-                    return .none
+-                }
+-                if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
+-                    state.lists[index].products.append(product)
+-                }
+-                return .none
+-
+-            case let .shoppingListFlow(.listSelected(listID)):
+-                guard
+-                    let product = state.shoppingListFlow?.product,
+-                    let index = state.lists.firstIndex(where: { $0.id == listID })
+-                else { return .none }
+-                if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
+-                    state.lists[index].products.append(product)
+-                }
+-                state.shoppingListFlow = nil
+-                return .none
+-
+-            case .shoppingListFlow(.createListConfirmed):
+-                guard let flow = state.shoppingListFlow else { return .none }
+-                let trimmedName = flow.draftListName.trimmingCharacters(in: .whitespacesAndNewlines)
+-                guard trimmedName.isEmpty == false else { return .none }
+-                state.lists.append(
+-                    ShoppingList(
+-                        id: UUID(),
+-                        name: trimmedName,
+-                        products: flow.product.map { [$0] } ?? []
+-                    )
++                    name: trimmedName,
++                    products: product.map { [$0] } ?? []
+                 )
+-                state.shoppingListFlow = nil
+-                return .none
+-
+-            case .shoppingListFlow(.dismissed):
+-                state.shoppingListFlow = nil
+-                return .none
++            )
++            return .none
+ 
+-            case .authProjectionUpdated, .cartProjectionUpdated, .addToCartTapped,
+-                 .cartDelegate, .delegate, .shoppingListFlow:
++        case let .addProductToList(product, listID):
++            guard let index = state.lists.firstIndex(where: { $0.id == listID }) else {
+                 return .none
+             }
++            if state.lists[index].products.contains(where: { $0.id == product.id }) == false {
++                state.lists[index].products.append(product)
++            }
++            return .none
++
++        case .authProjectionUpdated, .cartProjectionUpdated, .addToCartTapped,
++             .cartDelegate, .delegate:
++            return .none
+         }
+-    )
++    }
+ 
+     static let reducer: Reducer<State, Action> = .combine(
+         SharedLoginDomain.makeReducer(adapter: loginAdapter),
+diff --git a/Layout/Features/ShoppingList/ShoppingListView.swift b/Layout/Features/ShoppingList/ShoppingListView.swift
+index 98d1976..d88ec0b 100644
+--- a/Layout/Features/ShoppingList/ShoppingListView.swift
++++ b/Layout/Features/ShoppingList/ShoppingListView.swift
+@@ -5,11 +5,6 @@ struct ShoppingListView: View {
+     var store: Store<ShoppingListState, ShoppingListAction>
+ 
+     var body: some View {
+-        let shoppingListFlowStore = store.ifLet(
+-            state: \.shoppingListFlow,
+-            action: ShoppingListAction.shoppingListFlow
+-        )
+-
+         NavigationStack {
+             content
+                 .navigationTitle("Shopping Lists")
+@@ -20,15 +15,6 @@ struct ShoppingListView: View {
+                         }
+                     }
+                 }
+-                .sheet(
+-                    item: store.binding(state: \.shoppingListFlow, action: .shoppingListFlow(.dismissed))
+-                ) { _ in
+-                    if let shoppingListFlowStore {
+-                        ShoppingListFlowSheet(
+-                            store: shoppingListFlowStore
+-                        )
+-                    }
+-                }
+         }
+     }
+ 
+diff --git a/Layout/LayoutApp.swift b/Layout/LayoutApp.swift
+index 9df0099..7f5c076 100644
+--- a/Layout/LayoutApp.swift
++++ b/Layout/LayoutApp.swift
+@@ -1,10 +1,3 @@
+-//
+-//  LayoutApp.swift
+-//  Layout
+-//
+-//  Created by Siju Karunakaran on 15/03/26.
+-//
+-
+ import SwiftUI
+ 
+ @main
+diff --git a/LayoutTests/FileManagerDemoViewModelTests.swift b/LayoutTests/FileManagerDemoViewModelTests.swift
+index 6e3014d..7731307 100644
+--- a/LayoutTests/FileManagerDemoViewModelTests.swift
++++ b/LayoutTests/FileManagerDemoViewModelTests.swift
+@@ -1,7 +1,7 @@
+ import Foundation
+ import os
+ import Testing
+-import LocalDI
++import Splice
+ @testable import Layout
+ 
+ private struct FileManagerRecorder: Sendable {
+diff --git a/LayoutTests/NavigationDomainTests.swift b/LayoutTests/NavigationDomainTests.swift
+new file mode 100644
+index 0000000..0ea48b3
+--- /dev/null
++++ b/LayoutTests/NavigationDomainTests.swift
+@@ -0,0 +1,134 @@
++import Foundation
++import Testing
++@testable import Layout
++
++@Suite("NavigationDomain")
++struct NavigationDomainTests {
++
++    // MARK: - Tab switching
++
++    @Test func selectTabUpdateSelectedTab() {
++        var state = NavigationState()
++        _ = NavigationDomain.reducer.reduce(&state, .selectTab(.browse))
++        #expect(state.selectedTab == .browse)
++    }
++
++    // MARK: - Home stack
++
++    @Test func setHomeStackUpdatesStack() {
++        var state = NavigationState()
++        let product = Product.catalog[0]
++        _ = NavigationDomain.reducer.reduce(&state, .setHomeStack([.productDetail(product)]))
++        #expect(state.homeStack == [.productDetail(product)])
++    }
++
++    @Test func setHomeStackEmptyPopsAll() {
++        var state = NavigationState()
++        state.homeStack = [.productDetail(Product.catalog[0])]
++        _ = NavigationDomain.reducer.reduce(&state, .setHomeStack([]))
++        #expect(state.homeStack.isEmpty)
++    }
++
++    // MARK: - Browse stack
++
++    @Test func setBrowseStackUpdatesStack() {
++        var state = NavigationState()
++        let product = Product.catalog[1]
++        _ = NavigationDomain.reducer.reduce(&state, .setBrowseStack([.productDetail(product)]))
++        #expect(state.browseStack == [.productDetail(product)])
++    }
++
++    // MARK: - Login modal
++
++    @Test func presentLoginCreatesLoginState() {
++        var state = NavigationState()
++        _ = NavigationDomain.reducer.reduce(&state, .presentLogin)
++        #expect(state.login != nil)
++    }
++
++    @Test func presentLoginIsIdempotentWhenAlreadyPresent() {
++        var state = NavigationState()
++        _ = NavigationDomain.reducer.reduce(&state, .presentLogin)
++        let firstID = state.login?.id
++        _ = NavigationDomain.reducer.reduce(&state, .presentLogin)
++        #expect(state.login?.id == firstID)
++    }
++
++    @Test func dismissLoginClearsLoginState() {
++        var state = NavigationState()
++        state.login = LoginState(id: UUID())
++        _ = NavigationDomain.reducer.reduce(&state, .dismissLogin)
++        #expect(state.login == nil)
++    }
++
++    // MARK: - Shopping list flow modal
++
++    @Test func presentShoppingListFlowSetsModal() {
++        var state = NavigationState()
++        let flow = ShoppingListFlowState(id: UUID(), product: nil, mode: .create, availableLists: [])
++        _ = NavigationDomain.reducer.reduce(&state, .presentShoppingListFlow(flow))
++        #expect(state.shoppingListFlow != nil)
++        #expect(state.shoppingListFlow?.mode == .create)
++    }
++
++    @Test func dismissShoppingListFlowClearsModal() {
++        var state = NavigationState()
++        state.shoppingListFlow = ShoppingListFlowState(id: UUID(), product: nil, mode: .create, availableLists: [])
++        _ = NavigationDomain.reducer.reduce(&state, .dismissShoppingListFlow)
++        #expect(state.shoppingListFlow == nil)
++    }
++
++    @Test func shoppingListFlowDismissedActionClearsModal() {
++        var state = NavigationState()
++        state.shoppingListFlow = ShoppingListFlowState(id: UUID(), product: nil, mode: .create, availableLists: [])
++        _ = NavigationDomain.reducer.reduce(&state, .shoppingListFlow(.dismissed))
++        #expect(state.shoppingListFlow == nil)
++    }
++
++    // MARK: - URL parsing
++
++    @Test func openURLForKnownProductNavigatesToHomeAndPushesDestination() {
++        var state = NavigationState()
++        let product = Product.catalog[0]
++        let url = URL(string: "layout://product/\(product.id.uuidString)")!
++        _ = NavigationDomain.reducer.reduce(&state, .openURL(url))
++        #expect(state.selectedTab == .home)
++        #expect(state.homeStack == [.productDetail(product)])
++    }
++
++    @Test func openURLForUnknownProductIDDoesNothing() {
++        var state = NavigationState()
++        let url = URL(string: "layout://product/00000000-0000-0000-0000-000000000000")!
++        _ = NavigationDomain.reducer.reduce(&state, .openURL(url))
++        #expect(state.homeStack.isEmpty)
++        #expect(state.selectedTab == .home)
++    }
++
++    @Test func openURLForCartSwitchesToCartTab() {
++        var state = NavigationState()
++        let url = URL(string: "layout://cart")!
++        _ = NavigationDomain.reducer.reduce(&state, .openURL(url))
++        #expect(state.selectedTab == .cart)
++    }
++
++    @Test func openURLForListsSwitchesToShoppingListsTab() {
++        var state = NavigationState()
++        let url = URL(string: "layout://lists")!
++        _ = NavigationDomain.reducer.reduce(&state, .openURL(url))
++        #expect(state.selectedTab == .shoppingLists)
++    }
++
++    @Test func openURLWithWrongSchemeDoesNothing() {
++        var state = NavigationState()
++        let url = URL(string: "https://example.com/cart")!
++        _ = NavigationDomain.reducer.reduce(&state, .openURL(url))
++        #expect(state.selectedTab == .home)
++    }
++
++    @Test func openURLWithUnknownHostDoesNothing() {
++        var state = NavigationState()
++        let url = URL(string: "layout://unknown")!
++        _ = NavigationDomain.reducer.reduce(&state, .openURL(url))
++        #expect(state.selectedTab == .home)
++    }
++}
+-- 
+2.50.1 (Apple Git-155)
+
+
+From e047a0df8bee5ac3c3518ae25c196e5915fde78f Mon Sep 17 00:00:00 2001
+From: Siju Karunakran <karunakaran.siju@heb.com>
+Date: Wed, 29 Apr 2026 20:54:16 +0530
+Subject: [PATCH 2/3] Drive NavigationStack paths from feature store bindings
+
+Remove @Binding parameters from HomeView and BrowseView.
+Add navigationPath to HomeState/BrowseState and setNavigationPath
+actions so views bind via store.binding(state:action:).
+AppDomain bridges home/browse(.setNavigationPath) back to
+navigation.homeStack/browseStack, and the .navigation catch-all
+syncs stacks into feature states for deep-link propagation.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ Layout/App/AppDomain.swift                | 19 ++++++++++++++++++-
+ Layout/App/AppRootView.swift              | 16 ++--------------
+ Layout/Features/Browse/BrowseDomain.swift | 15 ++++++++++++++-
+ Layout/Features/Browse/BrowseView.swift   |  5 ++---
+ Layout/Features/Home/HomeDomain.swift     | 15 ++++++++++++++-
+ Layout/Features/Home/HomeView.swift       |  5 ++---
+ 6 files changed, 52 insertions(+), 23 deletions(-)
+
+diff --git a/Layout/App/AppDomain.swift b/Layout/App/AppDomain.swift
+index 7a57a9d..c3e4f50 100644
+--- a/Layout/App/AppDomain.swift
++++ b/Layout/App/AppDomain.swift
+@@ -52,6 +52,16 @@ enum AppDomain {
+         Reducer<State, Action> { state, action in
+             switch action {
+ 
++            // MARK: - Navigation path bridging (feature → NavigationDomain)
++
++            case .home(.setNavigationPath(let path)):
++                state.navigation.homeStack = path
++                return .none
++
++            case .browse(.setNavigationPath(let path)):
++                state.navigation.browseStack = path
++                return .none
++
+             // MARK: - Shopping list flow delegate (add to list from Home/Browse)
+ 
+             case let .home(.shoppingListDelegate(.addToListRequested(product, lists))),
+@@ -184,7 +194,14 @@ enum AppDomain {
+                 )
+                 return .task { shoppingListProjectionActions(for: projection) }
+ 
+-            case .browse, .home, .login, .navigation:
++            case .browse, .home, .login:
++                return .none
++
++            case .navigation:
++                // Sync navigation stacks back to feature domains so views
++                // driven by their scoped stores stay in sync (e.g. deep links).
++                state.home.navigationPath = state.navigation.homeStack
++                state.browse.navigationPath = state.navigation.browseStack
+                 return .none
+             }
+         }
+diff --git a/Layout/App/AppRootView.swift b/Layout/App/AppRootView.swift
+index 238e6cd..538559e 100644
+--- a/Layout/App/AppRootView.swift
++++ b/Layout/App/AppRootView.swift
+@@ -47,25 +47,13 @@ struct AppRootView: View {
+                 action: { AppAction.navigation(.selectTab($0)) }
+             )
+         ) {
+-            HomeView(
+-                store: homeStore,
+-                navigationPath: store.binding(
+-                    state: \.navigation.homeStack,
+-                    action: { AppAction.navigation(.setHomeStack($0)) }
+-                )
+-            )
++            HomeView(store: homeStore)
+             .tabItem {
+                 Label("Home", systemImage: "house.fill")
+             }
+             .tag(AppTab.home)
+ 
+-            BrowseView(
+-                store: browseStore,
+-                navigationPath: store.binding(
+-                    state: \.navigation.browseStack,
+-                    action: { AppAction.navigation(.setBrowseStack($0)) }
+-                )
+-            )
++            BrowseView(store: browseStore)
+             .tabItem {
+                 Label("Browse", systemImage: "square.grid.2x2.fill")
+             }
+diff --git a/Layout/Features/Browse/BrowseDomain.swift b/Layout/Features/Browse/BrowseDomain.swift
+index c8a2dcc..6b8415d 100644
+--- a/Layout/Features/Browse/BrowseDomain.swift
++++ b/Layout/Features/Browse/BrowseDomain.swift
+@@ -9,6 +9,7 @@ enum BrowseDomain {
+         var isAuthenticated = false
+         var cartQuantities: [Product.ID: Int] = [:]
+         var availableShoppingLists: [ShoppingList] = []
++        var navigationPath: [AppDestination] = []
+     }
+ 
+     @CasePathable
+@@ -18,6 +19,7 @@ enum BrowseDomain {
+         case shoppingListProjectionUpdated(SharedShoppingListDomain.Projection)
+         case addToCartTapped(Product)
+         case addToListTapped(Product)
++        case setNavigationPath([AppDestination])
+         case cartDelegate(SharedCartDomain.Delegate)
+         case shoppingListDelegate(SharedShoppingListDomain.Delegate)
+     }
+@@ -42,10 +44,21 @@ enum BrowseDomain {
+         )
+     }
+ 
++    static let featureReducer = Reducer<State, Action> { state, action in
++        switch action {
++        case .setNavigationPath(let path):
++            state.navigationPath = path
++            return .none
++        default:
++            return .none
++        }
++    }
++
+     static let reducer: Reducer<State, Action> = .combine(
+         SharedLoginDomain.makeReducer(adapter: loginAdapter),
+         SharedCartDomain.makeReducer(adapter: cartAdapter),
+-        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter)
++        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter),
++        featureReducer
+     )
+ }
+ 
+diff --git a/Layout/Features/Browse/BrowseView.swift b/Layout/Features/Browse/BrowseView.swift
+index 66074b6..b442b32 100644
+--- a/Layout/Features/Browse/BrowseView.swift
++++ b/Layout/Features/Browse/BrowseView.swift
+@@ -3,10 +3,9 @@ import SwiftUI
+ 
+ struct BrowseView: View {
+     var store: Store<BrowseState, BrowseAction>
+-    @Binding var navigationPath: [AppDestination]
+ 
+     var body: some View {
+-        NavigationStack(path: $navigationPath) {
++        NavigationStack(path: store.binding(state: \.navigationPath, action: BrowseAction.setNavigationPath)) {
+             List {
+                 ForEach(ProductCategory.allCases, id: \.rawValue) { category in
+                     let products = store.state.products.filter { $0.category == category }
+@@ -19,7 +18,7 @@ struct BrowseView: View {
+                                     product: product,
+                                     quantityInCart: quantityInCart,
+                                     openDetail: {
+-                                        navigationPath.append(.productDetail(product))
++                                        store.send(.setNavigationPath(store.state.navigationPath + [.productDetail(product)]))
+                                     },
+                                     addToCart: {
+                                         store.send(.addToCartTapped(product))
+diff --git a/Layout/Features/Home/HomeDomain.swift b/Layout/Features/Home/HomeDomain.swift
+index d087fd3..ceeaa48 100644
+--- a/Layout/Features/Home/HomeDomain.swift
++++ b/Layout/Features/Home/HomeDomain.swift
+@@ -9,6 +9,7 @@ enum HomeDomain {
+         var isAuthenticated = false
+         var cartQuantities: [Product.ID: Int] = [:]
+         var availableShoppingLists: [ShoppingList] = []
++        var navigationPath: [AppDestination] = []
+     }
+ 
+     @CasePathable
+@@ -18,6 +19,7 @@ enum HomeDomain {
+         case shoppingListProjectionUpdated(SharedShoppingListDomain.Projection)
+         case addToCartTapped(Product)
+         case addToListTapped(Product)
++        case setNavigationPath([AppDestination])
+         case cartDelegate(SharedCartDomain.Delegate)
+         case shoppingListDelegate(SharedShoppingListDomain.Delegate)
+     }
+@@ -42,10 +44,21 @@ enum HomeDomain {
+         )
+     }
+ 
++    static let featureReducer = Reducer<State, Action> { state, action in
++        switch action {
++        case .setNavigationPath(let path):
++            state.navigationPath = path
++            return .none
++        default:
++            return .none
++        }
++    }
++
+     static let reducer: Reducer<State, Action> = .combine(
+         SharedLoginDomain.makeReducer(adapter: loginAdapter),
+         SharedCartDomain.makeReducer(adapter: cartAdapter),
+-        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter)
++        SharedShoppingListDomain.makeReducer(adapter: shoppingListAdapter),
++        featureReducer
+     )
+ }
+ 
+diff --git a/Layout/Features/Home/HomeView.swift b/Layout/Features/Home/HomeView.swift
+index c843f61..0a38b8b 100644
+--- a/Layout/Features/Home/HomeView.swift
++++ b/Layout/Features/Home/HomeView.swift
+@@ -3,10 +3,9 @@ import SwiftUI
+ 
+ struct HomeView: View {
+     var store: Store<HomeState, HomeAction>
+-    @Binding var navigationPath: [AppDestination]
+ 
+     var body: some View {
+-        NavigationStack(path: $navigationPath) {
++        NavigationStack(path: store.binding(state: \.navigationPath, action: HomeAction.setNavigationPath)) {
+             ScrollView {
+                 VStack(alignment: .leading, spacing: 18) {
+                     heroSection
+@@ -19,7 +18,7 @@ struct HomeView: View {
+                                 product: product,
+                                 quantityInCart: quantityInCart,
+                                 openDetail: {
+-                                    navigationPath.append(.productDetail(product))
++                                    store.send(.setNavigationPath(store.state.navigationPath + [.productDetail(product)]))
+                                 },
+                                 addToCart: {
+                                     store.send(.addToCartTapped(product))
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 05fb13c6fadb0a55bcd0b1c32e26a32660a85845 Mon Sep 17 00:00:00 2001
+From: Siju Karunakran <karunakaran.siju@heb.com>
+Date: Wed, 29 Apr 2026 21:03:13 +0530
+Subject: [PATCH 3/3] Hide tab bar when navigating to product detail
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ Layout/Features/Browse/BrowseView.swift | 1 +
+ Layout/Features/Home/HomeView.swift     | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/Layout/Features/Browse/BrowseView.swift b/Layout/Features/Browse/BrowseView.swift
+index b442b32..92e0952 100644
+--- a/Layout/Features/Browse/BrowseView.swift
++++ b/Layout/Features/Browse/BrowseView.swift
+@@ -45,6 +45,7 @@ struct BrowseView: View {
+                         onAddToCart: { store.send(.addToCartTapped(product)) },
+                         onAddToList: { store.send(.addToListTapped(product)) }
+                     )
++                    .toolbar(.hidden, for: .tabBar)
+                 }
+             }
+         }
+diff --git a/Layout/Features/Home/HomeView.swift b/Layout/Features/Home/HomeView.swift
+index 0a38b8b..240e842 100644
+--- a/Layout/Features/Home/HomeView.swift
++++ b/Layout/Features/Home/HomeView.swift
+@@ -43,6 +43,7 @@ struct HomeView: View {
+                         onAddToCart: { store.send(.addToCartTapped(product)) },
+                         onAddToList: { store.send(.addToListTapped(product)) }
+                     )
++                    .toolbar(.hidden, for: .tabBar)
+                 }
+             }
+         }
+-- 
+2.50.1 (Apple Git-155)
+

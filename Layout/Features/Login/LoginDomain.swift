@@ -25,19 +25,18 @@ enum LoginDomain {
         case delegate(Delegate)
     }
 
-    static let reducer = Reducer<State, Action> { state, action in
-        switch action {
-        case let .emailChanged(email):
+    static let reducer = Reducer<State, Action>.combine(
+        .on(Action.emailChanged) { state, email in
             state.email = email
             state.errorMessage = nil
             return .none
-
-        case let .passwordChanged(password):
+        },
+        .on(Action.passwordChanged) { state, password in
             state.password = password
             state.errorMessage = nil
             return .none
-
-        case .signInTapped:
+        },
+        .on(matching: { if case .signInTapped = $0 { return true }; return false }) { state in
             let email = state.email.trimmingCharacters(in: .whitespacesAndNewlines)
             let password = state.password.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -51,19 +50,12 @@ enum LoginDomain {
                 return .none
             }
 
-            return .task {
-                .delegate(.signedIn(email: email))
-            }
-
-        case .cancelTapped:
-            return .task {
-                .delegate(.cancelled)
-            }
-
-        case .delegate:
-            return .none
+            return .task { .delegate(.signedIn(email: email)) }
+        },
+        .on(matching: { if case .cancelTapped = $0 { return true }; return false }) { _ in
+            .task { .delegate(.cancelled) }
         }
-    }
+    )
 }
 
 typealias LoginState = LoginDomain.State

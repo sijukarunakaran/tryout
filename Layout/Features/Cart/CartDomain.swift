@@ -23,6 +23,7 @@ enum CartDomain {
         var checkoutNotice: CheckoutNotice?
     }
 
+    @CasePathable
     enum Action: Sendable {
         case add(Product)
         case decrement(Product.ID)
@@ -38,48 +39,43 @@ enum CartDomain {
         @Dependency(OrderClient.self) var orderClient
     }
 
-    static let reducer = Reducer<State, Action> { state, action in
-        switch action {
-        case let .add(product):
+    static let reducer = Reducer<State, Action>.combine(
+        .on(Action.add) { state, product in
             if let index = state.items.firstIndex(where: { $0.product.id == product.id }) {
                 state.items[index].quantity += 1
             } else {
                 state.items.append(CartItem(product: product, quantity: 1))
             }
             return .none
-
-        case let .decrement(productID):
+        },
+        .on(Action.decrement) { state, productID in
             guard let index = state.items.firstIndex(where: { $0.product.id == productID }) else {
                 return .none
             }
-
             if state.items[index].quantity == 1 {
                 state.items.remove(at: index)
             } else {
                 state.items[index].quantity -= 1
             }
             return .none
-
-        case let .remove(productID):
+        },
+        .on(Action.remove) { state, productID in
             state.items.removeAll { $0.product.id == productID }
             return .none
-
-        case .clear:
+        },
+        .on(matching: { if case .clear = $0 { return true }; return false }) { state in
             state.items.removeAll()
             state.checkoutNotice = nil
             return .none
-
-        case .checkoutTapped:
+        },
+        .on(matching: { if case .checkoutTapped = $0 { return true }; return false }) { state in
             guard state.items.isEmpty == false, state.isCheckingOut == false else {
                 return .none
             }
-
             state.isCheckingOut = true
             state.checkoutNotice = nil
-
             let subtotalText = subtotal(for: state.items).formatted(.currency(code: "USD"))
             let orderClient = Dependencies().orderClient
-
             return .task {
                 do {
                     let orderNumber = try await orderClient.placeOrder()
@@ -95,8 +91,11 @@ enum CartDomain {
                     )
                 }
             }
-
-        case let .checkoutSucceeded(orderNumber, subtotalText):
+        },
+        .on(
+            extract: { if case let .checkoutSucceeded(orderNumber, subtotalText) = $0 { return (orderNumber, subtotalText) }; return nil }
+        ) { state, result in
+            let (orderNumber, subtotalText) = result
             state.isCheckingOut = false
             state.items.removeAll()
             state.checkoutNotice = State.CheckoutNotice(
@@ -104,20 +103,17 @@ enum CartDomain {
                 message: "Order placed #\(orderNumber) · \(subtotalText)"
             )
             return .none
-
-        case let .checkoutFailed(message):
+        },
+        .on(Action.checkoutFailed) { state, message in
             state.isCheckingOut = false
-            state.checkoutNotice = State.CheckoutNotice(
-                tone: .failure,
-                message: message
-            )
+            state.checkoutNotice = State.CheckoutNotice(tone: .failure, message: message)
             return .none
-
-        case .dismissCheckoutNotice:
+        },
+        .on(matching: { if case .dismissCheckoutNotice = $0 { return true }; return false }) { state in
             state.checkoutNotice = nil
             return .none
         }
-    }
+    )
 
     private static func subtotal(for items: [CartItem]) -> Decimal {
         items.reduce(0) { partial, item in
