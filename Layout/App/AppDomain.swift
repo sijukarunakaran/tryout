@@ -49,53 +49,70 @@ enum AppDomain {
             state: \.shoppingList,
             action: Action.shoppingList
         ),
-        Reducer<State, Action> { state, action in
-            switch action {
+        // MARK: - Navigation path bridging (feature → NavigationDomain) + flow modal + stack sync
+        .on(Action.navigation) { state, navAction in
+            if case .shoppingListFlow(.listSelected(let listID)) = navAction {
+                guard let product = state.navigation.shoppingListFlow?.product else { return .none }
+                state.navigation.shoppingListFlow = nil
+                return .task { [product] in [
+                    .shoppingList(.addProductToList(product, listID)),
+                    .navigation(.dismissShoppingListFlow)
+                ]}
+            }
+            if case .shoppingListFlow(.createListConfirmed) = navAction {
+                guard let flow = state.navigation.shoppingListFlow else { return .none }
+                state.navigation.shoppingListFlow = nil
+                return .task { [flow] in [
+                    .shoppingList(.createList(name: flow.draftListName, product: flow.product)),
+                    .navigation(.dismissShoppingListFlow)
+                ]}
+            }
+            // Sync navigation stacks back to feature domains so views
+            // driven by their scoped stores stay in sync (e.g. deep links).
+            state.home.navigationPath = state.navigation.homeStack
+            state.browse.navigationPath = state.navigation.browseStack
+            return .none
+        },
 
-            // MARK: - Navigation path bridging (feature → NavigationDomain)
-
-            case .home(.setNavigationPath(let path)):
+        // MARK: - Home action cross-domain handling
+        .on(Action.home) { state, homeAction in
+            if case let .setNavigationPath(path) = homeAction {
                 state.navigation.homeStack = path
                 return .none
+            }
+            if case let .shoppingListDelegate(.addToListRequested(product, lists)) = homeAction {
+                return handleAddToListRequested(&state, product: product, availableLists: lists)
+            }
+            if case let .shoppingListDelegate(delegate) = homeAction {
+                return handleShoppingListDelegate(&state, delegate: delegate)
+            }
+            if case let .cartDelegate(.addToCart(product)) = homeAction {
+                return handleAddToCart(&state, product: product)
+            }
+            return .none
+        },
 
-            case .browse(.setNavigationPath(let path)):
+        // MARK: - Browse action cross-domain handling
+        .on(Action.browse) { state, browseAction in
+            if case let .setNavigationPath(path) = browseAction {
                 state.navigation.browseStack = path
                 return .none
+            }
+            if case let .shoppingListDelegate(.addToListRequested(product, lists)) = browseAction {
+                return handleAddToListRequested(&state, product: product, availableLists: lists)
+            }
+            if case let .shoppingListDelegate(delegate) = browseAction {
+                return handleShoppingListDelegate(&state, delegate: delegate)
+            }
+            if case let .cartDelegate(.addToCart(product)) = browseAction {
+                return handleAddToCart(&state, product: product)
+            }
+            return .none
+        },
 
-            // MARK: - Shopping list flow delegate (add to list from Home/Browse)
-
-            case let .home(.shoppingListDelegate(.addToListRequested(product, lists))),
-                let .browse(.shoppingListDelegate(.addToListRequested(product, lists))):
-                guard state.isAuthenticated else {
-                    state.pendingProtectedAction = .addToList(product)
-                    if state.navigation.login == nil {
-                        state.navigation.login = LoginState(id: UUID())
-                    }
-                    return .none
-                }
-                state.navigation.shoppingListFlow = ShoppingListFlowState(
-                    id: UUID(),
-                    product: product,
-                    mode: lists.isEmpty ? .create : .picker,
-                    availableLists: lists
-                )
-                return .none
-
-            case let .home(.shoppingListDelegate(delegate)),
-                let .browse(.shoppingListDelegate(delegate)):
-                guard state.isAuthenticated else {
-                    let protectedAction = protectedAction(for: delegate)
-                    state.pendingProtectedAction = protectedAction
-                    if state.navigation.login == nil {
-                        state.navigation.login = LoginState(id: UUID())
-                    }
-                    return .none
-                }
-                return .task { shoppingListAction(for: delegate) }
-
-            // MARK: - Create list from ShoppingList tab
-
-            case .shoppingList(.delegate(.createListTapped)):
+        // MARK: - Shopping list: create list from tab + projection fanout
+        .on(Action.shoppingList) { state, shoppingListAction in
+            if case .delegate(.createListTapped) = shoppingListAction {
                 guard state.isAuthenticated else {
                     state.pendingProtectedAction = .startCreateList
                     if state.navigation.login == nil {
@@ -110,48 +127,28 @@ enum AppDomain {
                     availableLists: state.shoppingList.lists
                 )
                 return .none
+            }
+            let projection = SharedShoppingListDomain.makeProjection(
+                shoppingLists: state.shoppingList.lists
+            )
+            return .task { shoppingListProjectionActions(for: projection) }
+        },
 
-            // MARK: - Shopping list flow modal actions
+        // MARK: - Cart projection fanout
+        .on(Action.cart) { state, _ in
+            let projection = SharedCartDomain.makeProjection(cart: state.cart)
+            return .task { cartProjectionActions(for: projection) }
+        },
 
-            case .navigation(.shoppingListFlow(.listSelected(let listID))):
-                guard let product = state.navigation.shoppingListFlow?.product else { return .none }
-                state.navigation.shoppingListFlow = nil
-                return .task { [product] in [
-                    .shoppingList(.addProductToList(product, listID)),
-                    .navigation(.dismissShoppingListFlow)
-                ]}
-
-            case .navigation(.shoppingListFlow(.createListConfirmed)):
-                guard let flow = state.navigation.shoppingListFlow else { return .none }
-                state.navigation.shoppingListFlow = nil
-                return .task { [flow] in [
-                    .shoppingList(.createList(name: flow.draftListName, product: flow.product)),
-                    .navigation(.dismissShoppingListFlow)
-                ]}
-
-            // MARK: - Cart delegates
-
-            case let .home(.cartDelegate(.addToCart(product))),
-                let .browse(.cartDelegate(.addToCart(product))),
-                let .shoppingList(.cartDelegate(.addToCart(product))):
-                guard state.isAuthenticated else {
-                    state.pendingProtectedAction = .addToCart(product)
-                    if state.navigation.login == nil {
-                        state.navigation.login = LoginState(id: UUID())
-                    }
-                    return .none
-                }
-                return .task { .cart(.add(product)) }
-
-            // MARK: - Login delegates
-
-            case .login(.delegate(.signedIn)):
+        // MARK: - Login delegates
+        .on(Action.login) { state, loginAction in
+            if case .delegate(.signedIn) = loginAction {
                 state.isAuthenticated = true
                 state.navigation.login = nil
                 let authActions = authProjectionActions(isAuthenticated: true)
-                if let protectedAction = state.pendingProtectedAction {
+                if let pendingAction = state.pendingProtectedAction {
                     state.pendingProtectedAction = nil
-                    switch protectedAction {
+                    switch pendingAction {
                     case .startCreateList:
                         state.navigation.shoppingListFlow = ShoppingListFlowState(
                             id: UUID(),
@@ -160,7 +157,6 @@ enum AppDomain {
                             availableLists: state.shoppingList.lists
                         )
                         return .task { authActions }
-
                     case .addToList(let product):
                         let lists = state.shoppingList.lists
                         state.navigation.shoppingListFlow = ShoppingListFlowState(
@@ -170,42 +166,67 @@ enum AppDomain {
                             availableLists: lists
                         )
                         return .task { authActions }
-
                     default:
-                        return .task { authActions + [mapAction(for: protectedAction)] }
+                        return .task { authActions + [mapAction(for: pendingAction)] }
                     }
                 }
                 return .task { authActions }
-
-            case .login(.delegate(.cancelled)):
+            }
+            if case .delegate(.cancelled) = loginAction {
                 state.navigation.login = nil
                 state.pendingProtectedAction = nil
                 return .none
-
-            // MARK: - Projection fanout
-
-            case .cart:
-                let projection = SharedCartDomain.makeProjection(cart: state.cart)
-                return .task { cartProjectionActions(for: projection) }
-
-            case .shoppingList:
-                let projection = SharedShoppingListDomain.makeProjection(
-                    shoppingLists: state.shoppingList.lists
-                )
-                return .task { shoppingListProjectionActions(for: projection) }
-
-            case .browse, .home, .login:
-                return .none
-
-            case .navigation:
-                // Sync navigation stacks back to feature domains so views
-                // driven by their scoped stores stay in sync (e.g. deep links).
-                state.home.navigationPath = state.navigation.homeStack
-                state.browse.navigationPath = state.navigation.browseStack
-                return .none
             }
+            return .none
         }
     )
+
+    private static func handleAddToListRequested(
+        _ state: inout State,
+        product: Product,
+        availableLists: [ShoppingList]
+    ) -> Effect<Action> {
+        guard state.isAuthenticated else {
+            state.pendingProtectedAction = .addToList(product)
+            if state.navigation.login == nil {
+                state.navigation.login = LoginState(id: UUID())
+            }
+            return .none
+        }
+        state.navigation.shoppingListFlow = ShoppingListFlowState(
+            id: UUID(),
+            product: product,
+            mode: availableLists.isEmpty ? .create : .picker,
+            availableLists: availableLists
+        )
+        return .none
+    }
+
+    private static func handleShoppingListDelegate(
+        _ state: inout State,
+        delegate: SharedShoppingListDomain.Delegate
+    ) -> Effect<Action> {
+        guard state.isAuthenticated else {
+            let action = protectedAction(for: delegate)
+            state.pendingProtectedAction = action
+            if state.navigation.login == nil {
+                state.navigation.login = LoginState(id: UUID())
+            }
+            return .none
+        }
+        return .task { shoppingListAction(for: delegate) }
+    }
+
+    private static func handleAddToCart(_ state: inout State, product: Product) -> Effect<Action> {
+        guard state.isAuthenticated else {
+            state.pendingProtectedAction = .addToCart(product)
+            if state.navigation.login == nil {
+                state.navigation.login = LoginState(id: UUID())
+            }
+            return .none
+        }
+        return .task { .cart(.add(product)) }
+    }
 
     nonisolated static func shoppingListAction(
         for delegate: SharedShoppingListDomain.Delegate
