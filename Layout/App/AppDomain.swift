@@ -49,137 +49,150 @@ enum AppDomain {
             state: \.shoppingList,
             action: Action.shoppingList
         ),
-        // MARK: - Navigation path bridging (feature → NavigationDomain) + flow modal + stack sync
-        .on(Action.navigation) { state, navAction in
-            if case .shoppingListFlow(.listSelected(let listID)) = navAction {
-                guard let product = state.navigation.shoppingListFlow?.product else { return .none }
-                state.navigation.shoppingListFlow = nil
-                return .task { [product] in [
-                    .shoppingList(.addProductToList(product, listID)),
-                    .navigation(.dismissShoppingListFlow)
-                ]}
-            }
-            if case .shoppingListFlow(.createListConfirmed) = navAction {
-                guard let flow = state.navigation.shoppingListFlow else { return .none }
-                state.navigation.shoppingListFlow = nil
-                return .task { [flow] in [
-                    .shoppingList(.createList(name: flow.draftListName, product: flow.product)),
-                    .navigation(.dismissShoppingListFlow)
-                ]}
-            }
-            // Sync navigation stacks back to feature domains so views
-            // driven by their scoped stores stay in sync (e.g. deep links).
-            state.home.navigationPath = state.navigation.homeStack
-            state.browse.navigationPath = state.navigation.browseStack
-            return .none
-        },
+        navigationOrchestrationReducer,
+        homeOrchestrationReducer,
+        browseOrchestrationReducer,
+        shoppingListOrchestrationReducer,
+        cartProjectionReducer,
+        loginOrchestrationReducer
+    )
 
-        // MARK: - Home action cross-domain handling
-        .on(Action.home) { state, homeAction in
-            if case let .setNavigationPath(path) = homeAction {
-                state.navigation.homeStack = path
-                return .none
-            }
-            if case let .shoppingListDelegate(.addToListRequested(product, lists)) = homeAction {
-                return handleAddToListRequested(&state, product: product, availableLists: lists)
-            }
-            if case let .shoppingListDelegate(delegate) = homeAction {
-                return handleShoppingListDelegate(&state, delegate: delegate)
-            }
-            if case let .cartDelegate(.addToCart(product)) = homeAction {
-                return handleAddToCart(&state, product: product)
-            }
-            return .none
-        },
+    // MARK: - Navigation path bridging + flow modal confirmations + stack sync
 
-        // MARK: - Browse action cross-domain handling
-        .on(Action.browse) { state, browseAction in
-            if case let .setNavigationPath(path) = browseAction {
-                state.navigation.browseStack = path
-                return .none
-            }
-            if case let .shoppingListDelegate(.addToListRequested(product, lists)) = browseAction {
-                return handleAddToListRequested(&state, product: product, availableLists: lists)
-            }
-            if case let .shoppingListDelegate(delegate) = browseAction {
-                return handleShoppingListDelegate(&state, delegate: delegate)
-            }
-            if case let .cartDelegate(.addToCart(product)) = browseAction {
-                return handleAddToCart(&state, product: product)
-            }
-            return .none
-        },
+    private static let navigationOrchestrationReducer = Reducer<State, Action>.on(Action.navigation) { state, navAction in
+        if case .shoppingListFlow(.listSelected(let listID)) = navAction {
+            guard let product = state.navigation.shoppingListFlow?.product else { return .none }
+            state.navigation.shoppingListFlow = nil
+            return .task { [product] in [
+                .shoppingList(.addProductToList(product, listID)),
+                .navigation(.dismissShoppingListFlow)
+            ]}
+        }
+        if case .shoppingListFlow(.createListConfirmed) = navAction {
+            guard let flow = state.navigation.shoppingListFlow else { return .none }
+            state.navigation.shoppingListFlow = nil
+            return .task { [flow] in [
+                .shoppingList(.createList(name: flow.draftListName, product: flow.product)),
+                .navigation(.dismissShoppingListFlow)
+            ]}
+        }
+        // Sync navigation stacks back to feature domains so views
+        // driven by their scoped stores stay in sync (e.g. deep links).
+        state.home.navigationPath = state.navigation.homeStack
+        state.browse.navigationPath = state.navigation.browseStack
+        return .none
+    }
 
-        // MARK: - Shopping list: create list from tab + projection fanout
-        .on(Action.shoppingList) { state, shoppingListAction in
-            if case .delegate(.createListTapped) = shoppingListAction {
-                guard state.isAuthenticated else {
-                    state.pendingProtectedAction = .startCreateList
-                    if state.navigation.login == nil {
-                        state.navigation.login = LoginState(id: UUID())
-                    }
-                    return .none
-                }
-                state.navigation.shoppingListFlow = ShoppingListFlowState(
-                    id: UUID(),
-                    product: nil,
-                    mode: .create,
-                    availableLists: state.shoppingList.lists
-                )
-                return .none
-            }
-            let projection = SharedShoppingListDomain.makeProjection(
-                shoppingLists: state.shoppingList.lists
-            )
-            return .task { shoppingListProjectionActions(for: projection) }
-        },
+    // MARK: - Home cross-domain handling
 
-        // MARK: - Cart projection fanout
-        .on(Action.cart) { state, _ in
-            let projection = SharedCartDomain.makeProjection(cart: state.cart)
-            return .task { cartProjectionActions(for: projection) }
-        },
-
-        // MARK: - Login delegates
-        .on(Action.login) { state, loginAction in
-            if case .delegate(.signedIn) = loginAction {
-                state.isAuthenticated = true
-                state.navigation.login = nil
-                let authActions = authProjectionActions(isAuthenticated: true)
-                if let pendingAction = state.pendingProtectedAction {
-                    state.pendingProtectedAction = nil
-                    switch pendingAction {
-                    case .startCreateList:
-                        state.navigation.shoppingListFlow = ShoppingListFlowState(
-                            id: UUID(),
-                            product: nil,
-                            mode: .create,
-                            availableLists: state.shoppingList.lists
-                        )
-                        return .task { authActions }
-                    case .addToList(let product):
-                        let lists = state.shoppingList.lists
-                        state.navigation.shoppingListFlow = ShoppingListFlowState(
-                            id: UUID(),
-                            product: product,
-                            mode: lists.isEmpty ? .create : .picker,
-                            availableLists: lists
-                        )
-                        return .task { authActions }
-                    default:
-                        return .task { authActions + [mapAction(for: pendingAction)] }
-                    }
-                }
-                return .task { authActions }
-            }
-            if case .delegate(.cancelled) = loginAction {
-                state.navigation.login = nil
-                state.pendingProtectedAction = nil
-                return .none
-            }
+    private static let homeOrchestrationReducer = Reducer<State, Action>.on(Action.home) { state, homeAction in
+        if case let .setNavigationPath(path) = homeAction {
+            state.navigation.homeStack = path
             return .none
         }
-    )
+        if case let .shoppingListDelegate(.addToListRequested(product, lists)) = homeAction {
+            return handleAddToListRequested(&state, product: product, availableLists: lists)
+        }
+        if case let .shoppingListDelegate(delegate) = homeAction {
+            return handleShoppingListDelegate(&state, delegate: delegate)
+        }
+        if case let .cartDelegate(.addToCart(product)) = homeAction {
+            return handleAddToCart(&state, product: product)
+        }
+        return .none
+    }
+
+    // MARK: - Browse cross-domain handling
+
+    private static let browseOrchestrationReducer = Reducer<State, Action>.on(Action.browse) { state, browseAction in
+        if case let .setNavigationPath(path) = browseAction {
+            state.navigation.browseStack = path
+            return .none
+        }
+        if case let .shoppingListDelegate(.addToListRequested(product, lists)) = browseAction {
+            return handleAddToListRequested(&state, product: product, availableLists: lists)
+        }
+        if case let .shoppingListDelegate(delegate) = browseAction {
+            return handleShoppingListDelegate(&state, delegate: delegate)
+        }
+        if case let .cartDelegate(.addToCart(product)) = browseAction {
+            return handleAddToCart(&state, product: product)
+        }
+        return .none
+    }
+
+    // MARK: - Shopping list: create list gate + projection fanout
+
+    private static let shoppingListOrchestrationReducer = Reducer<State, Action>.on(Action.shoppingList) { state, shoppingListAction in
+        if case .delegate(.createListTapped) = shoppingListAction {
+            guard state.isAuthenticated else {
+                state.pendingProtectedAction = .startCreateList
+                if state.navigation.login == nil {
+                    state.navigation.login = LoginState(id: UUID())
+                }
+                return .none
+            }
+            state.navigation.shoppingListFlow = ShoppingListFlowState(
+                id: UUID(),
+                product: nil,
+                mode: .create,
+                availableLists: state.shoppingList.lists
+            )
+            return .none
+        }
+        let projection = SharedShoppingListDomain.makeProjection(
+            shoppingLists: state.shoppingList.lists
+        )
+        return .task { shoppingListProjectionActions(for: projection) }
+    }
+
+    // MARK: - Cart projection fanout
+
+    private static let cartProjectionReducer = Reducer<State, Action>.on(Action.cart) { state, _ in
+        let projection = SharedCartDomain.makeProjection(cart: state.cart)
+        return .task { cartProjectionActions(for: projection) }
+    }
+
+    // MARK: - Login delegates
+
+    private static let loginOrchestrationReducer = Reducer<State, Action>.on(Action.login) { state, loginAction in
+        if case .delegate(.signedIn) = loginAction {
+            state.isAuthenticated = true
+            state.navigation.login = nil
+            let authActions = authProjectionActions(isAuthenticated: true)
+            if let pendingAction = state.pendingProtectedAction {
+                state.pendingProtectedAction = nil
+                switch pendingAction {
+                case .startCreateList:
+                    state.navigation.shoppingListFlow = ShoppingListFlowState(
+                        id: UUID(),
+                        product: nil,
+                        mode: .create,
+                        availableLists: state.shoppingList.lists
+                    )
+                    return .task { authActions }
+                case .addToList(let product):
+                    let lists = state.shoppingList.lists
+                    state.navigation.shoppingListFlow = ShoppingListFlowState(
+                        id: UUID(),
+                        product: product,
+                        mode: lists.isEmpty ? .create : .picker,
+                        availableLists: lists
+                    )
+                    return .task { authActions }
+                default:
+                    return .task { authActions + [mapAction(for: pendingAction)] }
+                }
+            }
+            return .task { authActions }
+        }
+        if case .delegate(.cancelled) = loginAction {
+            state.navigation.login = nil
+            state.pendingProtectedAction = nil
+            return .none
+        }
+        return .none
+    }
 
     private static func handleAddToListRequested(
         _ state: inout State,
