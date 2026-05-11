@@ -52,6 +52,50 @@ public struct Reducer<State: Sendable, Action: Sendable> {
 }
 
 public extension Reducer {
+    /// Create a reducer that handles a single action case with an associated value.
+    ///
+    /// Requires `@CasePathable` on the Action enum to obtain the typed `CasePath`.
+    /// Non-matching actions return `.none` without touching state.
+    ///
+    /// ```swift
+    /// .on(Action.emailChanged) { state, email in
+    ///     state.email = email
+    ///     return .none
+    /// }
+    /// ```
+    static func on<Value>(
+        _ casePath: CasePath<Action, Value>,
+        perform: @escaping (inout State, Value) -> Effect<Action>
+    ) -> Reducer<State, Action> {
+        Reducer { state, action in
+            guard let value = casePath.extract(action) else { return .none }
+            return perform(&state, value)
+        }
+    }
+
+    /// Create a reducer that handles a single no-payload action case using a pattern-match predicate.
+    ///
+    /// Use this for action cases that carry no associated value, since Swift's naming rules prevent
+    /// `@CasePathable` from generating a `CasePath` for them (the case name is already a static member).
+    ///
+    /// ```swift
+    /// .on(matching: { if case .clear = $0 { return true }; return false }) { state in
+    ///     state.items.removeAll()
+    ///     return .none
+    /// }
+    /// ```
+    static func on(
+        matching predicate: @escaping (Action) -> Bool,
+        perform: @escaping (inout State) -> Effect<Action>
+    ) -> Reducer<State, Action> {
+        Reducer { state, action in
+            guard predicate(action) else { return .none }
+            return perform(&state)
+        }
+    }
+}
+
+public extension Reducer {
     /// Wrap this reducer so you get callbacks before and/or after every action.
     func intercept(
         willDispatch: ((State, Action) -> Void)? = nil,

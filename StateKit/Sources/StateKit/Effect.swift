@@ -101,7 +101,8 @@ public struct Effect<Action: Sendable>: Sendable {
     public static func merge(
         _ effects: [Effect]
     ) -> Effect {
-        .init { callback in effects.flatMap { $0.run(callback) } }
+        guard !effects.allSatisfy(\.isEmpty) else { return .none }
+        return .init { callback in effects.flatMap { $0.run(callback) } }
     }
 }
 
